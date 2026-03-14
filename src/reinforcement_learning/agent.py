@@ -173,9 +173,12 @@ class DQNAgent:
 
             # === Line 12: Update DQN weights using Bellman's equation ===
             # "Q_new(s, a, r) = r + gamma * Q_old(s, a, r)"
-            # Build target Q-value vector
+            # 'a' is the action TAKEN (from epsilon-greedy, Line 10),
+            # NOT the true label. This ensures:
+            #   - Correct action  -> Q[action] pushed UP   (reward=+1)
+            #   - Wrong action    -> Q[action] pushed DOWN (reward=-1)
             target_q_values = q_values.clone().detach()
-            target_q_values[0, true_label] = reward + self.gamma * q_values[0, true_label].item()
+            target_q_values[0, action] = reward + self.gamma * q_values[0, action].item()
 
             # Compute loss and update
             loss = self.criterion(q_values, target_q_values)
@@ -255,9 +258,9 @@ class DQNAgent:
             # Get current Q values
             q_values = self.dqn(state_t)
 
-            # Build target: reward + gamma * max Q
+            # Build target: r + gamma * Q_old(s, a) — same Bellman as live training
             target_q = q_values.clone().detach()
-            target_q[0, action] = reward + self.gamma * q_values.max().item()
+            target_q[0, action] = reward + self.gamma * q_values[0, action].item()
 
             # Apply importance sampling weight
             loss = self.criterion(q_values, target_q) * is_weights[i]
@@ -271,7 +274,7 @@ class DQNAgent:
             # Update priority
             with torch.no_grad():
                 new_q = self.dqn(state_t)
-                td_error = abs(reward + self.gamma * new_q.max().item() - new_q[0, action].item())
+                td_error = abs(reward + self.gamma * new_q[0, action].item() - new_q[0, action].item())
                 new_loss_weights.append(td_error ** self.omega)
 
         # Update priorities in memory
