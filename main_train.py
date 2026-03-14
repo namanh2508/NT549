@@ -86,23 +86,39 @@ def set_seeds(seed):
 
 
 def resolve_dataset_paths(data_dir):
-    """Resolve NSL-KDD train/test file paths from common local/Kaggle layouts."""
+    """Resolve NSL-KDD train/test file paths from common local/Kaggle layouts.
+
+    NOTE: Kaggle strips '+' from filenames on dataset upload, so
+      KDDTrain+.txt  ->  KDDTrain.txt
+      KDDTest+.txt   ->  KDDTest.txt
+    Both variants are tried automatically.
+    """
     candidates = [
         data_dir,
         os.path.join(data_dir, 'NSL-KDD'),
         '/kaggle/input/nsl-kdd',
         '/kaggle/input/nsl-kdd/NSL-KDD',
+        '/kaggle/input/nslkdd',
+        '/kaggle/input/nslkdd/NSL-KDD',
+    ]
+    # Try original names first, then Kaggle-stripped names ('+' removed)
+    name_pairs = [
+        ('KDDTrain+.txt', 'KDDTest+.txt'),  # original local filenames
+        ('KDDTrain.txt',  'KDDTest.txt'),   # Kaggle upload strips '+'
     ]
 
     for base_dir in candidates:
-        train_path = os.path.join(base_dir, 'KDDTrain+.txt')
-        test_path = os.path.join(base_dir, 'KDDTest+.txt')
-        if os.path.exists(train_path) and os.path.exists(test_path):
-            return train_path, test_path
+        for train_name, test_name in name_pairs:
+            train_path = os.path.join(base_dir, train_name)
+            test_path  = os.path.join(base_dir, test_name)
+            if os.path.exists(train_path) and os.path.exists(test_path):
+                return train_path, test_path
 
     raise FileNotFoundError(
-        "Could not find KDDTrain+.txt and KDDTest+.txt. "
-        f"Checked: {candidates}"
+        "Could not find NSL-KDD dataset files.\n"
+        "  Expected: KDDTrain+.txt / KDDTrain.txt  and  KDDTest+.txt / KDDTest.txt\n"
+        f"  Searched directories: {candidates}\n"
+        "  Tip: On Kaggle, '+' is stripped from filenames on upload."
     )
 
 

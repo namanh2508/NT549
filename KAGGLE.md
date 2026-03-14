@@ -90,8 +90,27 @@ Giải nén sao cho cấu trúc có `main_train.py`, `src/`, `requirements.txt`.
 
 ## Ghi chú
 
-- `main_train.py` đã tự nhận diện các layout phổ biến:
-  - `<data_dir>/KDDTrain+.txt`
-  - `<data_dir>/NSL-KDD/KDDTrain+.txt`
-  - `/kaggle/input/nsl-kdd/...`
-- Có thể tắt DAE bằng `--no_dae` khi cần rút ngắn thời gian thử nghiệm.
+### Tên file bị thay đổi khi upload lên Kaggle
+
+Kaggle **tự động xóa ký tự `+`** khỏi tên file khi upload dataset:
+
+| Tên file gốc              | Tên trên Kaggle          |
+| ------------------------- | ------------------------ |
+| `KDDTrain+.txt`           | `KDDTrain.txt`           |
+| `KDDTest+.txt`            | `KDDTest.txt`            |
+| `KDDTrain+_20Percent.txt` | `KDDTrain_20Percent.txt` |
+
+`main_train.py` đã được cập nhật để **tự động thử cả hai dạng tên** — không cần đổi tên file thủ công.
+
+### Path scheme tự nhận diện
+
+`main_train.py` kiểm tra lần lượt các thư mục sau:
+
+- `<data_dir>/KDDTrain+.txt` hoặc `KDDTrain.txt`
+- `<data_dir>/NSL-KDD/KDDTrain+.txt` hoặc `KDDTrain.txt`
+- `/kaggle/input/nsl-kdd/...`
+- `/kaggle/input/nslkdd/...`
+
+### Tùy chọn khác
+
+- Tắt DAE bằng `--no_dae` khi cần rút ngắn thời gian thử nghiệm.
