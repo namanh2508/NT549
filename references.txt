@@ -11,3 +11,5 @@ giai đoạn 4: FL
 Federated reinforcement learning based intrusion detection system using dynamic attention mechanism - baseline chính 
 Intrusion detection approach for industrial internet of things traffic using deep recurrent reinforcement learning assisted federated learning - reference
 UNSW-NB15 để test
+
+https://www.kaggle.com/datasets/phungvannamanh/nsl-kdd
