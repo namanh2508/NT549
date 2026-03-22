@@ -172,13 +172,29 @@ class DQNAgent:
                 reward = -1.0  # Incorrect prediction
 
             # === Line 12: Update DQN weights using Bellman's equation ===
-            # "Q_new(s, a, r) = r + gamma * Q_old(s, a, r)"
-            # 'a' is the action TAKEN (from epsilon-greedy, Line 10),
-            # NOT the true label. This ensures:
-            #   - Correct action  -> Q[action] pushed UP   (reward=+1)
-            #   - Wrong action    -> Q[action] pushed DOWN (reward=-1)
+            # Paper Algorithm 1 Line 12: "Q_new(s, a, r) = r + gamma * Q_old(s, a, r)"
+            # Paper Eq. 4, Page 3: loss = (r + gamma * max_a' Q_hat(s', a') - Q(s, a))^2
+            #
+            # In the IDS formulation each sample is an independent state (no
+            # sequential transitions), so we use the NEXT sample in the shuffled
+            # sequence as s' (next state). When j is the last sample we treat
+            # the episode as terminal (no future reward, target = r).
+            #
+            # FIX for Bug #1: The previous code used a self-referential target
+            # target = r + gamma * Q(s, a) which collapses the gradient by
+            # factor (1-gamma). Using a proper next-state target gives a full
+            # reward signal and matches Eq. 4 of the paper.
             target_q_values = q_values.clone().detach()
-            target_q_values[0, action] = reward + self.gamma * q_values[0, action].item()
+            if j + 1 < n_samples:
+                # Use next sample as next state s'
+                next_state = torch.FloatTensor(X_shuffled[j + 1]).unsqueeze(0).to(self.device)
+                with torch.no_grad():
+                    next_q = self.dqn(next_state)
+                    max_next_q = next_q.max(dim=1)[0].item()
+                target_q_values[0, action] = reward + self.gamma * max_next_q
+            else:
+                # Terminal step: no future reward
+                target_q_values[0, action] = reward
 
             # Compute loss and update
             loss = self.criterion(q_values, target_q_values)
@@ -192,12 +208,14 @@ class DQNAgent:
             # "error_vector = |Q_value_vector - target_Q_value_vector|"
             # "where the target_value_vector contains 0s at all indices
             #  except at the actual action's index (contains 1)"
+            #
+            # FIX for Bug #3: Use raw Q values (not softmax) as the paper
+            # specifies |Q_value_vector - target_Q_value_vector|. The target
+            # vector is one-hot at the true label position.
             with torch.no_grad():
                 target_vector = torch.zeros(self.num_actions).to(self.device)
                 target_vector[true_label] = 1.0
-                error_vector = torch.abs(
-                    torch.softmax(q_values[0], dim=0) - target_vector
-                )
+                error_vector = torch.abs(q_values[0] - target_vector)
 
                 # === Line 14: Compute current_state_loss_weight ===
                 # "current_state_loss_weight = (sum(error_vector[i]))^omega"
@@ -238,6 +256,12 @@ class DQNAgent:
          probability of selecting each sample, i.e., P_s is proportional
          to the state_loss_weight obtained during its training phase"
         "Replay the training process on the sampled batch"
+
+        Prioritized Experience Replay (Section 2.2.3, Page 3):
+        - Samples are picked based on their ability to increase learning
+        - Priority P(i) = p_i^alpha / sum(p_k^alpha), where p_i = |delta_i| + epsilon
+        - Importance sampling weight w_i = (1/N * 1/P(i))^beta
+        - delta_i is the TD error (Eq. 5, Page 3)
         """
         if len(self.memory) < self.batch_size_replay:
             return 0.0
@@ -252,17 +276,32 @@ class DQNAgent:
         total_replay_loss = 0.0
         new_loss_weights = []
 
+        # FIX for Bug #2: In replay we don't have a natural "next state".
+        # We use pairs within the sampled batch: sample i's next state is
+        # sample (i+1). The last sample is treated as terminal.
+        # This mirrors the live-training approach and gives meaningful TD
+        # errors for PER priority updates.
+        batch_states = [torch.FloatTensor(exp[0]).unsqueeze(0).to(self.device)
+                        for exp in batch]
+
         for i, (state, action, reward, _) in enumerate(batch):
-            state_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            state_t = batch_states[i]
 
             # Get current Q values
             q_values = self.dqn(state_t)
 
-            # Build target: r + gamma * Q_old(s, a) — same Bellman as live training
+            # Build target using next sample in batch as next state
+            # (consistent with Eq. 4, Page 3)
             target_q = q_values.clone().detach()
-            target_q[0, action] = reward + self.gamma * q_values[0, action].item()
+            if i + 1 < len(batch):
+                with torch.no_grad():
+                    next_q = self.dqn(batch_states[i + 1])
+                    max_next_q = next_q.max(dim=1)[0].item()
+                target_q[0, action] = reward + self.gamma * max_next_q
+            else:
+                target_q[0, action] = reward
 
-            # Apply importance sampling weight
+            # Apply importance sampling weight (Section 2.2.3, Page 3)
             loss = self.criterion(q_values, target_q) * is_weights[i]
 
             self.optimizer.zero_grad()
@@ -271,10 +310,11 @@ class DQNAgent:
 
             total_replay_loss += loss.item()
 
-            # Update priority
+            # Update priority: TD error = |target - prediction|
+            # Paper Eq. 5, Page 3: delta_i = r + gamma*Q(s',argmax Q(s',a;theta);theta^-) - Q(s,a;theta)
             with torch.no_grad():
                 new_q = self.dqn(state_t)
-                td_error = abs(reward + self.gamma * new_q[0, action].item() - new_q[0, action].item())
+                td_error = abs(target_q[0, action].item() - new_q[0, action].item())
                 new_loss_weights.append(td_error ** self.omega)
 
         # Update priorities in memory

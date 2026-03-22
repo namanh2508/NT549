@@ -217,19 +217,51 @@ class FederatedOrchestrator:
                 print(f"{'='*60}")
 
             # ============================================================
-            # STEP 1: Local training at each agent (Algorithm 1, Page 6)
+            # STEP 1: Evaluate AGGREGATED model & compute attention
+            #         (Algorithm 3, Page 6)
+            # ============================================================
+            # FIX for Bug #4: Algorithm 3 says:
+            #   "Input: ... aggregated model weights received from the
+            #    central server"
+            # Attention must be computed on the AGGREGATED model's accuracy,
+            # BEFORE local training, not after. In round 1 there is no
+            # aggregated model yet, so we evaluate each agent's current
+            # (initial or previously-aggregated) weights.
+            attention_values = []
+            for i in range(self.num_agents):
+                agent = self.agents[i]
+                X_test, y_test = self.agent_test_data[i]
+
+                # Algorithm 3, Line 3: "Compute the accuracy of the
+                # aggregated model on the available test dataset"
+                test_metrics = agent.evaluate(X_test, y_test)
+                test_accuracy = test_metrics['accuracy']
+
+                # Algorithm 3, Lines 4-5: compute attention value
+                # "attention_value = num_samples * attention_multiplier"
+                # Use training set size for num_samples (this round hasn't
+                # started yet, so we use the expected amount).
+                num_samples = len(self.agent_train_data[i][0]) * self.episodes_per_round
+                attn_value = self.attention_manager.compute_attention(
+                    agent_id=i,
+                    num_samples=num_samples,
+                    accuracy=test_accuracy
+                )
+                attention_values.append(attn_value)
+
+            # ============================================================
+            # STEP 2: Local training at each agent (Algorithm 1, Page 6)
             # ============================================================
             # "For each round of training process, the agent is given a
             #  batch of training samples" (Section 4.1, Page 5)
             agent_weights = []
-            attention_values = []
 
             for i in range(self.num_agents):
                 agent = self.agents[i]
                 X_train, y_train = self.agent_train_data[i]
                 X_test, y_test = self.agent_test_data[i]
 
-                # Reset round counter for attention computation
+                # Reset round counter
                 agent.reset_round_counter()
 
                 # Train for E episodes (Algorithm 1, Line 5: "for i in range 1 to E")
@@ -243,43 +275,22 @@ class FederatedOrchestrator:
                 avg_loss = round_loss / self.episodes_per_round
                 avg_acc = round_acc / self.episodes_per_round
 
-                # ============================================================
-                # STEP 2: Evaluate aggregated model on agent's test data
-                #         (Algorithm 3, Line 3, Page 6)
-                # ============================================================
-                # "Compute the accuracy of the aggregated model on the
-                #  available test dataset"
-                test_metrics = agent.evaluate(X_test, y_test)
-                test_accuracy = test_metrics['accuracy']
-
-                # ============================================================
-                # STEP 3: Compute dynamic attention value (Algorithm 3, Lines 4-5)
-                # ============================================================
-                # "attention_value = num_samples * attention_multiplier"
-                num_samples = agent.get_num_samples_trained()
-                attn_value = self.attention_manager.compute_attention(
-                    agent_id=i,
-                    num_samples=num_samples,
-                    accuracy=test_accuracy
-                )
-
-                # Collect weights and attention for aggregation
+                # Collect weights for aggregation
                 agent_weights.append(agent.get_weights())
-                attention_values.append(attn_value)
 
-                # Store round history for plotting
+                # Store round history for plotting (Figures 3-6)
                 history['round_accuracies'][i].append(avg_acc)
                 history['round_losses'][i].append(avg_loss)
-                history['round_attention_values'][i].append(attn_value)
+                history['round_attention_values'][i].append(attention_values[i])
 
                 if verbose:
                     multiplier = self.attention_manager.get_multipliers()[i]
                     print(f"  Agent {i}: Loss={avg_loss:.4f}, "
-                          f"TrainAcc={avg_acc:.4f}, TestAcc={test_accuracy:.4f}, "
-                          f"Attn={attn_value:.1f}, Mult={multiplier:.3f}")
+                          f"TrainAcc={avg_acc:.4f}, "
+                          f"Attn={attention_values[i]:.1f}, Mult={multiplier:.3f}")
 
             # ============================================================
-            # STEP 4: Central server aggregation (Algorithm 2, Page 6)
+            # STEP 3: Central server aggregation (Algorithm 2, Page 6)
             # ============================================================
             # "central server will compute W_sum, sum of network weight
             #  matrices multiplied by their respective attention values"
@@ -288,7 +299,7 @@ class FederatedOrchestrator:
             )
 
             # ============================================================
-            # STEP 5: Distribute aggregated weights to all agents
+            # STEP 4: Distribute aggregated weights to all agents
             #         (Algorithm 2, Line 8, Page 6)
             # ============================================================
             # "Send the computed W_agg to all the participating agents
@@ -300,7 +311,7 @@ class FederatedOrchestrator:
                 )
 
             # ============================================================
-            # STEP 6 (Optional): Evaluate on global test set
+            # STEP 5 (Optional): Evaluate on global test set
             # ============================================================
             if global_test_X is not None and global_test_y is not None:
                 # Use agent 0 (has the aggregated weights) for global eval
