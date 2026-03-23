@@ -13,3 +13,17 @@ Dataset/CIC-BCCC-NRC-IoMT-2024/Recon OS Scan.csv
 Dataset/CIC-BCCC-NRC-IoMT-2024/Recon Ping Sweep.csv
 Dataset/CIC-BCCC-NRC-IoMT-2024/Recon Port Scan.csv
 Dataset/CIC-BCCC-NRC-IoMT-2024/Recon Vulnerability Scan.csv
+Dataset/UNSW-NB15/UNSW_NB15_training-set.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Backdoor.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Benign Traffic.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/DDoS HTTP Flood.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/DDoS TCP SYN Flood.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/OS Fingerprinting.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Password Attack.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Port Scanning.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Ransomware.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/SQL Injection.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Uploading Attack.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Vulnerability Scanner.csv
+Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/XSS.csv
+Dataset/UNSW-NB15/UNSW_NB15_testing-set.csv

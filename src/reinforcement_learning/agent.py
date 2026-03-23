@@ -173,28 +173,14 @@ class DQNAgent:
 
             # === Line 12: Update DQN weights using Bellman's equation ===
             # Paper Algorithm 1 Line 12: "Q_new(s, a, r) = r + gamma * Q_old(s, a, r)"
-            # Paper Eq. 4, Page 3: loss = (r + gamma * max_a' Q_hat(s', a') - Q(s, a))^2
             #
-            # In the IDS formulation each sample is an independent state (no
-            # sequential transitions), so we use the NEXT sample in the shuffled
-            # sequence as s' (next state). When j is the last sample we treat
-            # the episode as terminal (no future reward, target = r).
-            #
-            # FIX for Bug #1: The previous code used a self-referential target
-            # target = r + gamma * Q(s, a) which collapses the gradient by
-            # factor (1-gamma). Using a proper next-state target gives a full
-            # reward signal and matches Eq. 4 of the paper.
+            # In IDS, each sample is an independent state — there are no
+            # sequential transitions (no s'). After shuffling, X[j+1] has no
+            # temporal relation to X[j]. Each sample is effectively a single-step
+            # terminal episode, so the target is simply the reward:
+            #   target_Q(s, action) = reward
             target_q_values = q_values.clone().detach()
-            if j + 1 < n_samples:
-                # Use next sample as next state s'
-                next_state = torch.FloatTensor(X_shuffled[j + 1]).unsqueeze(0).to(self.device)
-                with torch.no_grad():
-                    next_q = self.dqn(next_state)
-                    max_next_q = next_q.max(dim=1)[0].item()
-                target_q_values[0, action] = reward + self.gamma * max_next_q
-            else:
-                # Terminal step: no future reward
-                target_q_values[0, action] = reward
+            target_q_values[0, action] = reward
 
             # Compute loss and update
             loss = self.criterion(q_values, target_q_values)
@@ -209,12 +195,12 @@ class DQNAgent:
             # "where the target_value_vector contains 0s at all indices
             #  except at the actual action's index (contains 1)"
             #
-            # FIX for Bug #3: Use raw Q values (not softmax) as the paper
-            # specifies |Q_value_vector - target_Q_value_vector|. The target
-            # vector is one-hot at the true label position.
+            # Paper says "actual action's index" = the action TAKEN (predicted),
+            # not the true label. When action != true_label, using true_label
+            # would put the 1 at the wrong position.
             with torch.no_grad():
                 target_vector = torch.zeros(self.num_actions).to(self.device)
-                target_vector[true_label] = 1.0
+                target_vector[action] = 1.0
                 error_vector = torch.abs(q_values[0] - target_vector)
 
                 # === Line 14: Compute current_state_loss_weight ===
@@ -276,30 +262,17 @@ class DQNAgent:
         total_replay_loss = 0.0
         new_loss_weights = []
 
-        # FIX for Bug #2: In replay we don't have a natural "next state".
-        # We use pairs within the sampled batch: sample i's next state is
-        # sample (i+1). The last sample is treated as terminal.
-        # This mirrors the live-training approach and gives meaningful TD
-        # errors for PER priority updates.
-        batch_states = [torch.FloatTensor(exp[0]).unsqueeze(0).to(self.device)
-                        for exp in batch]
-
         for i, (state, action, reward, _) in enumerate(batch):
-            state_t = batch_states[i]
+            state_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
 
             # Get current Q values
             q_values = self.dqn(state_t)
 
-            # Build target using next sample in batch as next state
-            # (consistent with Eq. 4, Page 3)
+            # Each sample is an independent terminal state (no sequential
+            # transitions). PER-sampled batches have no temporal ordering,
+            # so batch[i+1] is unrelated to batch[i]. Target is simply reward.
             target_q = q_values.clone().detach()
-            if i + 1 < len(batch):
-                with torch.no_grad():
-                    next_q = self.dqn(batch_states[i + 1])
-                    max_next_q = next_q.max(dim=1)[0].item()
-                target_q[0, action] = reward + self.gamma * max_next_q
-            else:
-                target_q[0, action] = reward
+            target_q[0, action] = reward
 
             # Apply importance sampling weight (Section 2.2.3, Page 3)
             loss = self.criterion(q_values, target_q) * is_weights[i]
