@@ -6,7 +6,7 @@ Paper: "Federated reinforcement learning based intrusion detection system
 Journal: Journal of Information Security and Applications 78 (2023) 103608
 ============================================================================
 This script runs the complete training pipeline:
-  1. Load and preprocess NSL-KDD dataset (Section 5.1, Page 7)
+  1. Load and preprocess dataset (NSL-KDD, CIC-IoMT-2024, or CIC-Edge-IIoTSet-2022)
   2. Train Denoising Autoencoder (Section 4.1, Page 5)
   3. Transform features through DAE
   4. Distribute data among agents (Section 6, Page 8)
@@ -14,8 +14,14 @@ This script runs the complete training pipeline:
   6. Evaluate and visualize results (Section 6, Pages 8-13)
 
 Usage:
-  python main_train.py --data_dir ./Dataset --experiment random
-  python main_train.py --data_dir ./Dataset --experiment customized
+  # Scenario A: NSL-KDD (original paper)
+  python main_train.py --dataset nsl-kdd --experiment random
+
+  # Scenario B: Same-domain IoT
+  python main_train.py --dataset iomt --experiment random --subsample_per_file 10000
+
+  # Scenario C: Cross-domain IoT
+  python main_train.py --dataset iomt --test_dataset iiot --experiment random --subsample_per_file 10000
 ============================================================================
 """
 
@@ -34,6 +40,10 @@ from src.data.nsl_kdd import (
     load_nsl_kdd, preprocess_nsl_kdd, distribute_data_random,
     distribute_data_customized
 )
+from src.data.cic_common import (
+    load_cic_dataset, preprocess_cic, resolve_cic_dataset_path,
+    distribute_data_customized_iomt, distribute_data_customized_iiot
+)
 from src.models.denoising_autoencoder import (
     DenoisingAutoencoder, train_dae, transform_with_dae
 )
@@ -47,8 +57,16 @@ from src.utils.config import *
 
 def parse_args():
     parser = argparse.ArgumentParser(description='FDRL-IDS Training')
+    parser.add_argument('--dataset', type=str, default='nsl-kdd',
+                        choices=['nsl-kdd', 'iomt', 'iiot'],
+                        help='Training dataset: nsl-kdd, iomt (CIC-IoMT-2024), '
+                             'iiot (CIC-Edge-IIoTSet-2022)')
+    parser.add_argument('--test_dataset', type=str, default=None,
+                        choices=['nsl-kdd', 'iomt', 'iiot'],
+                        help='Test dataset (if different from --dataset, '
+                             'enables cross-dataset evaluation)')
     parser.add_argument('--data_dir', type=str, default='./Dataset',
-                        help='Directory containing NSL-KDD dataset files')
+                        help='Directory containing dataset folders')
     parser.add_argument('--experiment', type=str, default='random',
                         choices=['random', 'customized', 'scalability'],
                         help='Experiment type (Section 6, Page 8)')
@@ -74,6 +92,9 @@ def parse_args():
                         help='Optional cap on train samples for quick smoke runs')
     parser.add_argument('--max_test_samples', type=int, default=None,
                         help='Optional cap on test samples for quick smoke runs')
+    parser.add_argument('--subsample_per_file', type=int, default=None,
+                        help='Max rows per CSV file for CIC datasets '
+                             '(recommended: 10000 for ~150K total rows)')
     return parser.parse_args()
 
 
@@ -141,10 +162,20 @@ def run_experiment(args):
     1. Random/Uniform split: 8 agents, random equal-size data splits (Page 8)
     2. Customized split: 2 agents, Agent0=Normal+DoS, Agent1=Normal+Probe+U2R+R2L (Page 9)
     """
+    # Build descriptive labels for output
+    dataset_label = args.dataset.upper().replace('-', '_')
+    test_dataset_name = args.test_dataset or args.dataset
+    test_label = test_dataset_name.upper().replace('-', '_')
+    is_cross_dataset = (args.test_dataset is not None
+                        and args.test_dataset != args.dataset)
+
     print("=" * 70)
     print("  FDRL-IDS: Federated Deep Reinforcement Learning based IDS")
     print("  Paper: JISA 78 (2023) 103608")
     print(f"  Experiment: {args.experiment}")
+    print(f"  Train dataset: {dataset_label}")
+    print(f"  Test dataset:  {test_label}"
+          + (" (cross-dataset)" if is_cross_dataset else ""))
     print(f"  Device: {DEVICE}")
     print("=" * 70)
 
@@ -152,24 +183,57 @@ def run_experiment(args):
     set_seeds(args.seed)
 
     # ==================================================================
-    # STEP 1: Load and Preprocess NSL-KDD Dataset
-    # Paper Reference: Section 5.1, Page 7
+    # STEP 1: Load and Preprocess Dataset
     # ==================================================================
-    print("\n[Step 1] Loading NSL-KDD dataset...")
-    train_path, test_path = resolve_dataset_paths(args.data_dir)
-    print(f"  Train file: {train_path}")
-    print(f"  Test file:  {test_path}")
+    train_attack_names = None  # Used for customized CIC distribution
+    raw_train_df = None  # Used for customized NSL-KDD distribution
 
-    train_df, test_df = load_nsl_kdd(train_path, test_path)
+    if args.dataset == 'nsl-kdd':
+        # --- NSL-KDD path (Paper Section 5.1, Page 7) ---
+        print("\n[Step 1] Loading NSL-KDD dataset...")
+        train_path, test_path = resolve_dataset_paths(args.data_dir)
+        print(f"  Train file: {train_path}")
+        print(f"  Test file:  {test_path}")
 
-    # Keep raw train_df for customized split (need original labels)
-    import pandas as pd
-    raw_train_df = train_df.copy()
+        train_df, test_df = load_nsl_kdd(train_path, test_path)
+        import pandas as pd
+        raw_train_df = train_df.copy()
 
-    X_train, y_train, X_test, y_test, scaler, feature_dim = preprocess_nsl_kdd(
-        train_df, test_df
-    )
+        X_train, y_train, X_test, y_test, scaler, feature_dim = preprocess_nsl_kdd(
+            train_df, test_df
+        )
 
+    elif args.dataset in ('iomt', 'iiot'):
+        # --- CIC dataset path ---
+        print(f"\n[Step 1] Loading CIC {dataset_label} dataset...")
+        train_dir = resolve_cic_dataset_path(args.data_dir, args.dataset)
+        print(f"  Train dir: {train_dir}")
+
+        train_df = load_cic_dataset(
+            train_dir, subsample_per_file=args.subsample_per_file, seed=args.seed
+        )
+
+        if is_cross_dataset:
+            # Cross-dataset: load test dataset separately
+            print(f"\n  Loading test dataset: {test_label}...")
+            test_dir = resolve_cic_dataset_path(args.data_dir, test_dataset_name)
+            print(f"  Test dir: {test_dir}")
+            test_df = load_cic_dataset(
+                test_dir, subsample_per_file=args.subsample_per_file, seed=args.seed
+            )
+        else:
+            # Same-domain: test_df=None triggers 80/20 stratified split
+            test_df = None
+
+        result = preprocess_cic(train_df, test_df, seed=args.seed)
+        X_train, y_train, X_test, y_test = result[0], result[1], result[2], result[3]
+        scaler, feature_dim = result[4], result[5]
+        train_attack_names = result[6]
+
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
+
+    # Optional subsampling for smoke tests
     X_train, y_train = maybe_subsample(
         X_train, y_train, args.max_train_samples, args.seed
     )
@@ -235,9 +299,18 @@ def run_experiment(args):
     elif args.experiment == 'customized':
         # Section 6.1, Page 9: 2 agents with customized data
         num_agents = 2
-        agent_data = distribute_data_customized(
-            raw_train_df, y_train, X_train_final, num_agents=2, seed=args.seed
-        )
+        if args.dataset == 'nsl-kdd':
+            agent_data = distribute_data_customized(
+                raw_train_df, y_train, X_train_final, num_agents=2, seed=args.seed
+            )
+        elif args.dataset == 'iomt':
+            agent_data = distribute_data_customized_iomt(
+                train_attack_names, y_train, X_train_final, seed=args.seed
+            )
+        elif args.dataset == 'iiot':
+            agent_data = distribute_data_customized_iiot(
+                train_attack_names, y_train, X_train_final, seed=args.seed
+            )
         # Customized split params (Section 6.1, Page 10): k=50000, a=200
         attn_k = 50000
         attn_a = 200
@@ -301,27 +374,38 @@ def run_experiment(args):
     print("\n[Step 6] Final Evaluation on Test Set...")
     final_metrics = orchestrator.evaluate_global(X_test_final, y_test)
     print("\n" + "=" * 50)
-    print("  FINAL RESULTS (compare with Table 3, Page 11)")
+    if is_cross_dataset:
+        print(f"  FINAL RESULTS (Train: {dataset_label}, Test: {test_label})")
+    else:
+        print(f"  FINAL RESULTS ({dataset_label}, {args.experiment} split)")
     print("=" * 50)
     print_metrics(final_metrics, "Global Model")
 
-    # Paper Reference: Table 3 expected results for NSL-KDD random:
-    # Accuracy=0.9669, FPR=0.0195, Recall=0.9514,
-    # Precision=0.9769, F1=0.964, AUC=0.994
-    print("\n[Paper Reference] Table 3 (Page 11) Expected for NSL-KDD Random:")
-    print("  Accuracy=0.9669, FPR=0.0195, Recall=0.9514")
-    print("  Precision=0.9769, F1=0.964, AUC=0.994")
+    if args.dataset == 'nsl-kdd':
+        # Paper Reference: Table 3 expected results for NSL-KDD random:
+        # Accuracy=0.9669, FPR=0.0195, Recall=0.9514,
+        # Precision=0.9769, F1=0.964, AUC=0.994
+        print("\n[Paper Reference] Table 3 (Page 11) Expected for NSL-KDD Random:")
+        print("  Accuracy=0.9669, FPR=0.0195, Recall=0.9514")
+        print("  Precision=0.9769, F1=0.964, AUC=0.994")
 
     # ==================================================================
     # STEP 7: Plot Results
     # Paper Reference: Figures 3-7, Pages 9-13
     # ==================================================================
     print(f"\n[Step 7] Generating plots...")
-    plot_dir = os.path.join(args.output_dir, f'plots_{args.experiment}')
+    if is_cross_dataset:
+        plot_suffix = f"{args.dataset}_to_{test_dataset_name}_{args.experiment}"
+        title_suffix = f"(Train:{dataset_label}, Test:{test_label}, {args.experiment})"
+    else:
+        plot_suffix = f"{args.dataset}_{args.experiment}"
+        title_suffix = f"({dataset_label}, {args.experiment} split)"
+
+    plot_dir = os.path.join(args.output_dir, f'plots_{plot_suffix}')
 
     plot_all_training_curves(
         history, num_agents,
-        title_suffix=f"(NSL-KDD, {args.experiment} split)",
+        title_suffix=title_suffix,
         save_dir=plot_dir
     )
 
@@ -343,7 +427,7 @@ def run_experiment(args):
     roc_path = os.path.join(plot_dir, 'roc_curve.png') if plot_dir else None
     plot_roc_curve(
         fpr_arr, tpr_arr, final_metrics['auc_roc'],
-        title=f"ROC Curve - NSL-KDD ({args.experiment} split)",
+        title=f"ROC Curve - {title_suffix}",
         save_path=roc_path
     )
 
@@ -352,6 +436,10 @@ def run_experiment(args):
     # ==================================================================
     results = {
         'experiment': args.experiment,
+        'dataset': args.dataset,
+        'test_dataset': test_dataset_name,
+        'cross_dataset': is_cross_dataset,
+        'subsample_per_file': args.subsample_per_file,
         'num_agents': num_agents,
         'num_rounds': args.num_rounds,
         'attention_k': attn_k,
@@ -360,7 +448,7 @@ def run_experiment(args):
         'training_time': total_time,
     }
 
-    results_path = os.path.join(args.output_dir, f'results_{args.experiment}.json')
+    results_path = os.path.join(args.output_dir, f'results_{plot_suffix}.json')
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2)
     print(f"\n[Results] Saved to {results_path}")
@@ -380,17 +468,29 @@ def run_scalability_experiment(args):
     """
     print("=" * 70)
     print("  Scalability Experiment (Section 6.3, Page 11)")
+    print(f"  Dataset: {args.dataset.upper()}")
     print("=" * 70)
 
     os.makedirs(args.output_dir, exist_ok=True)
     set_seeds(args.seed)
 
-    # Load data
-    train_path, test_path = resolve_dataset_paths(args.data_dir)
-    train_df, test_df = load_nsl_kdd(train_path, test_path)
-    X_train, y_train, X_test, y_test, scaler, feature_dim = preprocess_nsl_kdd(
-        train_df, test_df
-    )
+    # Load data based on dataset choice
+    if args.dataset == 'nsl-kdd':
+        train_path, test_path = resolve_dataset_paths(args.data_dir)
+        train_df, test_df = load_nsl_kdd(train_path, test_path)
+        X_train, y_train, X_test, y_test, scaler, feature_dim = preprocess_nsl_kdd(
+            train_df, test_df
+        )
+    elif args.dataset in ('iomt', 'iiot'):
+        train_dir = resolve_cic_dataset_path(args.data_dir, args.dataset)
+        train_df = load_cic_dataset(
+            train_dir, subsample_per_file=args.subsample_per_file, seed=args.seed
+        )
+        result = preprocess_cic(train_df, seed=args.seed)
+        X_train, y_train, X_test, y_test = result[0], result[1], result[2], result[3]
+        scaler, feature_dim = result[4], result[5]
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
 
     X_train, y_train = maybe_subsample(
         X_train, y_train, args.max_train_samples, args.seed
@@ -451,7 +551,7 @@ def run_scalability_experiment(args):
     os.makedirs(plot_dir, exist_ok=True)
     plot_accuracy_vs_num_agents(
         agent_counts, avg_accuracies,
-        title="(NSL-KDD)",
+        title=f"({args.dataset.upper()})",
         save_path=os.path.join(plot_dir, 'scalability.png')
     )
 
