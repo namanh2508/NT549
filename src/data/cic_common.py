@@ -97,6 +97,10 @@ def resolve_cic_dataset_path(data_dir, dataset_name):
     """
     Resolve CIC dataset directory path.
 
+    Searches local paths (data_dir) and common Kaggle input layouts.
+    Kaggle normalizes dataset slugs to lowercase-hyphenated, so
+    'CIC-BCCC-NRC-IoMT-2024' may appear as 'cic-bccc-nrc-iomt-2024'.
+
     Args:
         data_dir: Base directory containing dataset folders
         dataset_name: 'iomt' or 'iiot'
@@ -106,24 +110,59 @@ def resolve_cic_dataset_path(data_dir, dataset_name):
         FileNotFoundError if dataset directory not found
     """
     dir_name = DATASET_DIRS[dataset_name]
+    dir_name_lower = dir_name.lower()
 
+    # Explicit candidate paths (local + common Kaggle structures)
     candidates = [
         os.path.join(data_dir, dir_name),
         os.path.join(data_dir, dataset_name),
-        f'/kaggle/input/{dir_name.lower()}',
-        f'/kaggle/input/{dir_name.lower()}/{dir_name}',
+        f'/kaggle/input/{dir_name_lower}',
+        f'/kaggle/input/{dir_name_lower}/{dir_name}',
+        f'/kaggle/input/{dataset_name}',
     ]
 
+    def _has_csvs(path):
+        return os.path.isdir(path) and any(
+            f.endswith('.csv') for f in os.listdir(path)
+        )
+
     for path in candidates:
-        if os.path.isdir(path):
-            csv_files = glob.glob(os.path.join(path, '*.csv'))
-            if csv_files:
-                return path
+        if _has_csvs(path):
+            return path
+
+    # Fuzzy search: scan /kaggle/input and data_dir for matching subdirectories
+    search_bases = ['/kaggle/input', data_dir]
+    match_substrings = [dir_name_lower, dataset_name]
+
+    for base in search_bases:
+        if not os.path.isdir(base):
+            continue
+        for d in os.listdir(base):
+            d_lower = d.lower()
+            if not any(s in d_lower for s in match_substrings):
+                continue
+            full = os.path.join(base, d)
+            # Check directory itself
+            if _has_csvs(full):
+                return full
+            # Check one level deeper (e.g. /kaggle/input/slug/ActualDir/)
+            if os.path.isdir(full):
+                for sd in os.listdir(full):
+                    subfull = os.path.join(full, sd)
+                    if _has_csvs(subfull):
+                        return subfull
+
+    # List available datasets for debugging
+    kaggle_input = '/kaggle/input'
+    available = ''
+    if os.path.isdir(kaggle_input):
+        dirs = sorted(os.listdir(kaggle_input))
+        available = '\n  Available in /kaggle/input: ' + ', '.join(dirs[:20])
 
     raise FileNotFoundError(
         f"Could not find {dir_name} dataset.\n"
         f"  Expected a directory with CSV files.\n"
-        f"  Searched: {candidates}"
+        f"  Searched: {candidates}{available}"
     )
 
 
@@ -231,20 +270,20 @@ def preprocess_cic(train_df, test_df=None, test_size=0.2, seed=42):
 
     # Handle Infinity and NaN values
     # CICFlowMeter produces Inf when Flow Duration=0 (division by zero)
-    train_features.replace([np.inf, -np.inf], np.nan, inplace=True)
-    test_features.replace([np.inf, -np.inf], np.nan, inplace=True)
+    train_features = train_features.replace([np.inf, -np.inf], np.nan)
+    test_features = test_features.replace([np.inf, -np.inf], np.nan)
 
     # Fill NaN with training set medians (train medians used for both)
     train_medians = train_features.median()
-    train_features.fillna(train_medians, inplace=True)
-    test_features.fillna(train_medians, inplace=True)
+    train_features = train_features.fillna(train_medians)
+    test_features = test_features.fillna(train_medians)
 
     n_train_nan = train_features.isna().sum().sum()
     n_test_nan = test_features.isna().sum().sum()
     if n_train_nan > 0 or n_test_nan > 0:
         print(f"  [Warning] Remaining NaN after fill: train={n_train_nan}, test={n_test_nan}")
-        train_features.fillna(0, inplace=True)
-        test_features.fillna(0, inplace=True)
+        train_features = train_features.fillna(0)
+        test_features = test_features.fillna(0)
 
     X_train = train_features.values
     X_test = test_features.values

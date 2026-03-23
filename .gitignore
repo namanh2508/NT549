@@ -1,29 +1,16 @@
-Dataset/CIC-BCCC-NRC-IoMT-2024/Benign Traffic.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/DDoS ICMP Flood.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/DDoS UDP Flood.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/DoS ICMP Flood.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/DoS TCP Flood.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/DoS UDP Flood.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/MITM ARP Spoofing.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/MQTT DDoS Publish Flood.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/MQTT DoS Connect Flood.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/MQTT DoS Publish Flood.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/MQTT Malformed.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/Recon OS Scan.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/Recon Ping Sweep.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/Recon Port Scan.csv
-Dataset/CIC-BCCC-NRC-IoMT-2024/Recon Vulnerability Scan.csv
-Dataset/UNSW-NB15/UNSW_NB15_training-set.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Backdoor.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Benign Traffic.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/DDoS HTTP Flood.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/DDoS TCP SYN Flood.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/OS Fingerprinting.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Password Attack.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Port Scanning.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Ransomware.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/SQL Injection.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Uploading Attack.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/Vulnerability Scanner.csv
-Dataset/CIC-BCCC-NRC-Edge-IIoTSet-2022/XSS.csv
-Dataset/UNSW-NB15/UNSW_NB15_testing-set.csv
+# Datasets (large CSV files - use Kaggle Datasets instead)
+Dataset/
+
+# Results and plots (regenerated each run)
+results/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# Environment
+.env
+.venv/
+venv/

@@ -234,6 +234,7 @@ def run_experiment(args):
         raise ValueError(f"Unknown dataset: {args.dataset}")
 
     # Optional subsampling for smoke tests
+    original_train_len = len(X_train)
     X_train, y_train = maybe_subsample(
         X_train, y_train, args.max_train_samples, args.seed
     )
@@ -242,6 +243,14 @@ def run_experiment(args):
     )
     if args.max_train_samples is not None or args.max_test_samples is not None:
         print(f"  [Subsample] Train={len(X_train)} | Test={len(X_test)}")
+
+    # Keep train_attack_names aligned with X_train.
+    # If maybe_subsample reduced X_train, re-apply the same indices to attack_names
+    # so that customized CIC distribution matches the correct rows.
+    if train_attack_names is not None and len(train_attack_names) != len(X_train):
+        rng = np.random.default_rng(args.seed)
+        idx = rng.choice(original_train_len, size=len(X_train), replace=False)
+        train_attack_names = train_attack_names[idx]
 
     # ==================================================================
     # STEP 2: Train Denoising Autoencoder (Optional)
