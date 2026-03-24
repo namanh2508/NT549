@@ -184,6 +184,7 @@ def plot_roc_curve(fpr_arr, tpr_arr, auc_value, title="ROC Curve",
     plt.grid(True, alpha=0.3)
 
     if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"[Plot] Saved ROC curve to {save_path}")
     plt.show()

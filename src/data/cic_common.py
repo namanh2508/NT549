@@ -112,12 +112,14 @@ def resolve_cic_dataset_path(data_dir, dataset_name):
     dir_name = DATASET_DIRS[dataset_name]
     dir_name_lower = dir_name.lower()
 
-    # Explicit candidate paths (local + common Kaggle structures)
+    # Explicit candidate paths (most likely first)
+    # Kaggle structure: /kaggle/input/<slug>/<OriginalFolderName>/*.csv
     candidates = [
-        os.path.join(data_dir, dir_name),
+        f'/kaggle/input/{dir_name_lower}/{dir_name}',   # standard Kaggle nested (slug/FolderName)
+        f'/kaggle/input/{dir_name}/{dir_name}',         # mixed-case slug variant
+        os.path.join(data_dir, dir_name),               # local: ./Dataset/CIC-BCCC-NRC-...
+        f'/kaggle/input/{dir_name_lower}',              # flat Kaggle (CSVs directly in slug folder)
         os.path.join(data_dir, dataset_name),
-        f'/kaggle/input/{dir_name_lower}',
-        f'/kaggle/input/{dir_name_lower}/{dir_name}',
         f'/kaggle/input/{dataset_name}',
     ]
 
@@ -263,6 +265,9 @@ def preprocess_cic(train_df, test_df=None, test_size=0.2, seed=42):
     drop_cols = METADATA_COLS + [ATTACK_NAME_COL, LABEL_COL]
     train_features = train_df.drop(columns=drop_cols, errors='ignore')
     test_features = test_df.drop(columns=drop_cols, errors='ignore')
+
+    # Align test columns to match train column order (defensive for cross-dataset)
+    test_features = test_features.reindex(columns=train_features.columns)
 
     # Convert to float32
     train_features = train_features.astype(np.float32)

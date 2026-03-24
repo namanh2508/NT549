@@ -215,11 +215,12 @@ def run_experiment(args):
 
         if is_cross_dataset:
             # Cross-dataset: load test dataset separately
+            # Bug 1 fix: use different seed for test to ensure independent subsampling
             print(f"\n  Loading test dataset: {test_label}...")
             test_dir = resolve_cic_dataset_path(args.data_dir, test_dataset_name)
             print(f"  Test dir: {test_dir}")
             test_df = load_cic_dataset(
-                test_dir, subsample_per_file=args.subsample_per_file, seed=args.seed
+                test_dir, subsample_per_file=args.subsample_per_file, seed=args.seed + 1
             )
         else:
             # Same-domain: test_df=None triggers 80/20 stratified split
@@ -229,6 +230,7 @@ def run_experiment(args):
         X_train, y_train, X_test, y_test = result[0], result[1], result[2], result[3]
         scaler, feature_dim = result[4], result[5]
         train_attack_names = result[6]
+        test_attack_names = result[7]  # Bug 2 fix: capture test_attack_names
 
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
@@ -284,6 +286,8 @@ def run_experiment(args):
         dae_scaler = MinMaxScaler()
         X_train_final = dae_scaler.fit_transform(X_train_dae)
         X_test_final = dae_scaler.transform(X_test_dae)
+        # Warning 3 fix: clip test data after DAE scaler (cross-domain values may exceed [0,1])
+        X_test_final = np.clip(X_test_final, 0.0, 1.0)
     else:
         print("\n[Step 2] Skipping DAE, using preprocessed features directly...")
         X_train_final = X_train
@@ -420,19 +424,17 @@ def run_experiment(args):
 
     # ROC Curve (Figure 7, Page 13)
     # Get predictions with probabilities for ROC
-    predictions = []
-    probabilities = []
+    # Warning 5 fix: batch inference instead of item-by-item loop
     agent = orchestrator.agents[0]
     agent.dqn.eval()
     with torch.no_grad():
-        for i in range(len(X_test_final)):
-            state = torch.FloatTensor(X_test_final[i]).unsqueeze(0).to(DEVICE)
-            q_vals = agent.dqn(state)
-            probs = torch.softmax(q_vals[0], dim=0)
-            probabilities.append(probs[1].item())
-            predictions.append(q_vals.argmax(dim=1).item())
+        X_tensor = torch.FloatTensor(X_test_final).to(DEVICE)
+        q_vals = agent.dqn(X_tensor)
+        probs = torch.softmax(q_vals, dim=1)
+        probabilities = probs[:, 1].cpu().numpy()
+        predictions = q_vals.argmax(dim=1).cpu().numpy()
 
-    fpr_arr, tpr_arr, _ = compute_roc_data(y_test, np.array(probabilities))
+    fpr_arr, tpr_arr, _ = compute_roc_data(y_test, probabilities)
     roc_path = os.path.join(plot_dir, 'roc_curve.png') if plot_dir else None
     plot_roc_curve(
         fpr_arr, tpr_arr, final_metrics['auc_roc'],
@@ -518,6 +520,7 @@ def run_scalability_experiment(args):
         dae_scaler = MinMaxScaler()
         X_train_final = dae_scaler.fit_transform(X_train_final)
         X_test_final = dae_scaler.transform(X_test_final)
+        X_test_final = np.clip(X_test_final, 0.0, 1.0)
         input_dim = X_train_final.shape[1]
     else:
         X_train_final, X_test_final = X_train, X_test
