@@ -85,12 +85,15 @@ OMEGA = 0.5  # Power factor for state_loss_weight (Algorithm 1, line 14, Page 6)
 
 # ===========================================================================
 # Federated Learning Configuration (Section 4, Page 4-5)
+# If traing locally , uncomment the following line to set NUM_ROUNDS = 30
 # ===========================================================================
-# Number of agents (Section 6, Page 8)
-# "we simulated an IDS containing eight agents and one central server"
-NUM_AGENTS = 8  # For random split experiment
-NUM_ROUNDS = 30  # Number of federated rounds
-EPISODES_PER_ROUND = 3  # Episodes each agent trains per round
+# NOTE: NUM_AGENTS, NUM_ROUNDS, EPISODES_PER_ROUND are intentionally NOT
+# defined here — they are set by the user in the notebook/script and must
+# not be overwritten by 'from src.utils.config import *'.
+# Default values for reference:
+#   NUM_AGENTS = 8  (random split), 2 (customized split)
+#   NUM_ROUNDS = 30
+#   EPISODES_PER_ROUND = 3
 
 # ===========================================================================
 # Dynamic Attention Mechanism (Section 4.3-4.4, Eq.6, Page 6-7)
