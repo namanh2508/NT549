@@ -173,14 +173,9 @@ class DQNAgent:
 
             # === Line 12: Update DQN weights using Bellman's equation ===
             # Paper Algorithm 1 Line 12: "Q_new(s, a, r) = r + gamma * Q_old(s, a, r)"
-            #
-            # In IDS, each sample is an independent state — there are no
-            # sequential transitions (no s'). After shuffling, X[j+1] has no
-            # temporal relation to X[j]. Each sample is effectively a single-step
-            # terminal episode, so the target is simply the reward:
-            #   target_Q(s, action) = reward
+            q_old_action = q_values[0, action].detach().item()
             target_q_values = q_values.clone().detach()
-            target_q_values[0, action] = reward
+            target_q_values[0, action] = reward + self.gamma * q_old_action
 
             # Compute loss and update
             loss = self.criterion(q_values, target_q_values)
@@ -268,11 +263,10 @@ class DQNAgent:
             # Get current Q values
             q_values = self.dqn(state_t)
 
-            # Each sample is an independent terminal state (no sequential
-            # transitions). PER-sampled batches have no temporal ordering,
-            # so batch[i+1] is unrelated to batch[i]. Target is simply reward.
+            # Paper Algorithm 1 Line 12: "Q_new(s, a, r) = r + gamma * Q_old(s, a, r)"
+            q_old_action = q_values[0, action].detach().item()
             target_q = q_values.clone().detach()
-            target_q[0, action] = reward
+            target_q[0, action] = reward + self.gamma * q_old_action
 
             # Apply importance sampling weight (Section 2.2.3, Page 3)
             loss = self.criterion(q_values, target_q) * is_weights[i]

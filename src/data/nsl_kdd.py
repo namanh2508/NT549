@@ -140,13 +140,16 @@ def preprocess_nsl_kdd(train_df, test_df):
     # protocol_type, service, flag are the main categorical columns
     categorical_cols = ['protocol_type', 'service', 'flag']
 
-    # Combine train and test for consistent encoding
-    combined = pd.concat([train_df, test_df], axis=0)
-    combined = pd.get_dummies(combined, columns=categorical_cols, dtype=float)
+    # Encode train and test independently to avoid vocabulary leakage,
+    # then align test columns to train's feature space.
+    train_df = pd.get_dummies(train_df, columns=categorical_cols, dtype=float)
+    test_df = pd.get_dummies(test_df, columns=categorical_cols, dtype=float)
 
-    # Split back
-    X_train = combined.iloc[:len(train_df)].values.astype(np.float32)
-    X_test = combined.iloc[len(train_df):].values.astype(np.float32)
+    # Align: keep only train columns (unseen test categories → 0)
+    test_df = test_df.reindex(columns=train_df.columns, fill_value=0.0)
+
+    X_train = train_df.values.astype(np.float32)
+    X_test = test_df.values.astype(np.float32)
 
     # Step 4: Normalize features using MinMaxScaler
     # Section 4.1, Page 5: "output of the DAE is then passed to the data
