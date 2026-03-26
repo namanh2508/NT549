@@ -123,3 +123,56 @@ CIC_DATASET_DIRS = {
 TRAIN_BATCH_SIZE = 256
 TEST_SPLIT_RATIO = 0.2  # Fraction of agent's data used as test set for attention
 RANDOM_SEED = 42
+
+# ===========================================================================
+# PPO Configuration (Improvement 1: Replace DQN with PPO)
+# Reference: "Deep RL for Wireless Communications", Algorithm 3.8, Page 73
+# ===========================================================================
+# PPO Clipping parameter ε (Eq. 3.96, Page 72)
+# Giới hạn mức thay đổi policy mỗi lần update: clip(ρ, 1-ε, 1+ε)
+# ε=0.2 là giá trị chuẩn, cho phép policy thay đổi ±20%
+PPO_CLIP_EPSILON = 0.2
+
+# Số epochs K cập nhật trên mỗi batch trajectory
+# Algorithm 3.8, Step 7: "for K epochs do"
+# K=4 cân bằng giữa hiệu quả sử dụng data và nguy cơ overfitting
+PPO_EPOCHS = 4
+
+# Kích thước mini-batch cho PPO update
+# Algorithm 3.8, Step 8: "Sample M transitions"
+PPO_MINI_BATCH_SIZE = 64
+
+# Learning rate cho PPO (thường thấp hơn DQN vì update trên batch lớn)
+PPO_LEARNING_RATE = 3e-4
+
+# Hệ số c₁ cho critic loss trong total loss
+# L = L_actor + c₁·L_critic - c₂·entropy
+PPO_VALUE_COEF = 0.5
+
+# Hệ số c₂ cho entropy bonus (khuyến khích exploration)
+PPO_ENTROPY_COEF = 0.01
+
+# Giới hạn gradient norm để tránh exploding gradients
+PPO_MAX_GRAD_NORM = 0.5
+
+# ===========================================================================
+# Advanced Reward Configuration (Improvement 2: Redesigned Reward Function)
+# R(t) = α·TP − β·FP − γ·FN + δ·(1-latency) + ε·novelty_bonus
+# ===========================================================================
+# Trọng số thưởng True Positive (phát hiện đúng tấn công)
+REWARD_ALPHA = 1.0
+
+# Trọng số phạt False Positive (cảnh báo giả)
+# β < γ: cảnh báo giả ít nghiêm trọng hơn bỏ lọt tấn công
+REWARD_BETA = 0.5
+
+# Trọng số phạt False Negative (bỏ lọt tấn công)
+# γ > β: bỏ lọt tấn công là lỗi nghiêm trọng nhất
+# Tăng giá trị này cho môi trường nhạy cảm (bệnh viện, ngân hàng)
+REWARD_GAMMA_FN = 2.0
+
+# Trọng số latency bonus (mặc định tắt cho offline training)
+REWARD_DELTA = 0.0
+
+# Trọng số novelty bonus (thưởng khi phát hiện pattern tấn công mới)
+REWARD_EPSILON_NOV = 0.3

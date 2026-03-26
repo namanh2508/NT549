@@ -2,14 +2,14 @@ Link dataset tổng hợp: https://www.unb.ca/cic/datasets/
 -> link dataset chính: http://cicresearch.ca/IOTDataset/CIC-BCCC-NRC-TabularIoTAttacks-2024/Dataset/
 
 chọn dataset này vì 2025 còn mới chưa ổn định và các dataset khác ko phù hợp cho việc train RL và FL  sau này 
-tự viết rules tay vì bộ dataset này ko có rules-based chuẩn 
-giai đoạn 1: rule-based, thay vì tự viết tay rules dùng Decision tree -> tạo rule  
-giai đoạn 2: ML-based, dùng ML để phân loại traffic ( attack hay normal )
-giai đoạn 3: RL, dùng RL để đưa ra quyết định, phản ứng khi traffic đã đc phân loại 
-giai đoạn 4: FL 
 
 Federated reinforcement learning based intrusion detection system using dynamic attention mechanism - baseline chính 
 Intrusion detection approach for industrial internet of things traffic using deep recurrent reinforcement learning assisted federated learning - reference
 UNSW-NB15 để test
 
 https://www.kaggle.com/datasets/phungvannamanh/nsl-kdd
+https://www.kaggle.com/datasets/phungvannamanh/nt549-full-dataset
+
+research gap
+1. mục 2.2.1 và 2.2.2 tác giả sử dụng các thuật toán Qlearning, DQN chuẩn đúng như đã học, nhưng pseudocode của thuật toán 1 lại có công thức khác 
+2. với baseline hiện tại mà train trên dataset mới IoMT thì bị FPR cao, còn cross-dataset thì bị TN = 0 

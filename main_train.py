@@ -95,6 +95,28 @@ def parse_args():
     parser.add_argument('--subsample_per_file', type=int, default=None,
                         help='Max rows per CSV file for CIC datasets '
                              '(recommended: 10000 for ~150K total rows)')
+
+    # === Improvement 1: PPO Agent ===
+    parser.add_argument('--agent_type', type=str, default='dqn',
+                        choices=['dqn', 'ppo'],
+                        help='RL agent type: dqn (original paper) or ppo (improvement)')
+
+    # === Improvement 2: Advanced Reward (used with PPO) ===
+    parser.add_argument('--reward_alpha', type=float, default=None,
+                        help='TP reward weight (default: from config)')
+    parser.add_argument('--reward_beta', type=float, default=None,
+                        help='FP penalty weight (default: from config)')
+    parser.add_argument('--reward_gamma_fn', type=float, default=None,
+                        help='FN penalty weight (default: from config). '
+                             'Increase for high-security environments')
+    parser.add_argument('--reward_delta', type=float, default=None,
+                        help='Latency bonus weight (default: from config)')
+    parser.add_argument('--reward_epsilon_nov', type=float, default=None,
+                        help='Novelty bonus weight (default: from config)')
+    parser.add_argument('--reward_context', type=str, default=None,
+                        choices=['high_security', 'low_alert_fatigue', 'balanced'],
+                        help='Predefined reward weight preset for network context')
+
     return parser.parse_args()
 
 
@@ -176,6 +198,7 @@ def run_experiment(args):
     print(f"  Train dataset: {dataset_label}")
     print(f"  Test dataset:  {test_label}"
           + (" (cross-dataset)" if is_cross_dataset else ""))
+    print(f"  Agent type: {args.agent_type.upper()}")
     print(f"  Device: {DEVICE}")
     print("=" * 70)
 
@@ -337,12 +360,22 @@ def run_experiment(args):
     # ==================================================================
     print(f"\n[Step 4] Creating federated system with {num_agents} agents...")
 
+    # Xác định learning rate theo loại agent
+    agent_lr = PPO_LEARNING_RATE if args.agent_type == 'ppo' else DQN_LEARNING_RATE
+
+    # Xác định reward weights (ưu tiên CLI args > config defaults)
+    r_alpha = args.reward_alpha if args.reward_alpha is not None else REWARD_ALPHA
+    r_beta = args.reward_beta if args.reward_beta is not None else REWARD_BETA
+    r_gamma_fn = args.reward_gamma_fn if args.reward_gamma_fn is not None else REWARD_GAMMA_FN
+    r_delta = args.reward_delta if args.reward_delta is not None else REWARD_DELTA
+    r_eps_nov = args.reward_epsilon_nov if args.reward_epsilon_nov is not None else REWARD_EPSILON_NOV
+
     orchestrator = FederatedOrchestrator(
         num_agents=num_agents,
         input_dim=input_dim,
         hidden_layers=DQN_HIDDEN_LAYERS,
         num_actions=NUM_ACTIONS,
-        lr=DQN_LEARNING_RATE,
+        lr=agent_lr,
         gamma=GAMMA,
         epsilon_start=EPSILON_START,
         epsilon_end=EPSILON_END,
@@ -357,7 +390,19 @@ def run_experiment(args):
         attention_k=attn_k,
         attention_a=attn_a,
         episodes_per_round=args.episodes_per_round,
-        device=str(DEVICE)
+        device=str(DEVICE),
+        agent_type=args.agent_type,
+        ppo_clip_epsilon=PPO_CLIP_EPSILON,
+        ppo_epochs=PPO_EPOCHS,
+        ppo_mini_batch_size=PPO_MINI_BATCH_SIZE,
+        ppo_value_coef=PPO_VALUE_COEF,
+        ppo_entropy_coef=PPO_ENTROPY_COEF,
+        ppo_max_grad_norm=PPO_MAX_GRAD_NORM,
+        reward_alpha=r_alpha,
+        reward_beta=r_beta,
+        reward_gamma_fn=r_gamma_fn,
+        reward_delta=r_delta,
+        reward_epsilon_nov=r_eps_nov,
     )
 
     # Assign data to agents
@@ -424,15 +469,25 @@ def run_experiment(args):
 
     # ROC Curve (Figure 7, Page 13)
     # Get predictions with probabilities for ROC
-    # Warning 5 fix: batch inference instead of item-by-item loop
+    # Hỗ trợ cả DQN và PPO: dùng interface chung evaluate()
     agent = orchestrator.agents[0]
-    agent.dqn.eval()
-    with torch.no_grad():
-        X_tensor = torch.FloatTensor(X_test_final).to(DEVICE)
-        q_vals = agent.dqn(X_tensor)
-        probs = torch.softmax(q_vals, dim=1)
-        probabilities = probs[:, 1].cpu().numpy()
-        predictions = q_vals.argmax(dim=1).cpu().numpy()
+    if args.agent_type == 'ppo':
+        # PPO: dùng actor network để lấy action probabilities
+        agent.network.eval()
+        with torch.no_grad():
+            X_tensor = torch.FloatTensor(X_test_final).to(DEVICE)
+            action_probs, _ = agent.network(X_tensor)
+            probabilities = action_probs[:, 1].cpu().numpy()
+            predictions = action_probs.argmax(dim=1).cpu().numpy()
+    else:
+        # DQN: dùng Q-values + softmax
+        agent.dqn.eval()
+        with torch.no_grad():
+            X_tensor = torch.FloatTensor(X_test_final).to(DEVICE)
+            q_vals = agent.dqn(X_tensor)
+            probs = torch.softmax(q_vals, dim=1)
+            probabilities = probs[:, 1].cpu().numpy()
+            predictions = q_vals.argmax(dim=1).cpu().numpy()
 
     fpr_arr, tpr_arr, _ = compute_roc_data(y_test, probabilities)
     roc_path = os.path.join(plot_dir, 'roc_curve.png') if plot_dir else None
@@ -530,21 +585,41 @@ def run_scalability_experiment(args):
     agent_counts = [2, 4, 6, 8]
     avg_accuracies = []
 
+    # Xác định learning rate và reward weights cho scalability experiment
+    agent_lr = PPO_LEARNING_RATE if args.agent_type == 'ppo' else DQN_LEARNING_RATE
+    r_alpha = args.reward_alpha if args.reward_alpha is not None else REWARD_ALPHA
+    r_beta = args.reward_beta if args.reward_beta is not None else REWARD_BETA
+    r_gamma_fn = args.reward_gamma_fn if args.reward_gamma_fn is not None else REWARD_GAMMA_FN
+    r_delta = args.reward_delta if args.reward_delta is not None else REWARD_DELTA
+    r_eps_nov = args.reward_epsilon_nov if args.reward_epsilon_nov is not None else REWARD_EPSILON_NOV
+
     for n_agents in agent_counts:
-        print(f"\n--- Testing with {n_agents} agents ---")
+        print(f"\n--- Testing with {n_agents} agents ({args.agent_type.upper()}) ---")
         agent_data = distribute_data_random(X_train_final, y_train, n_agents, args.seed)
 
         orchestrator = FederatedOrchestrator(
             num_agents=n_agents, input_dim=input_dim,
             hidden_layers=DQN_HIDDEN_LAYERS, num_actions=NUM_ACTIONS,
-            lr=DQN_LEARNING_RATE, gamma=GAMMA,
+            lr=agent_lr, gamma=GAMMA,
             epsilon_start=EPSILON_START, epsilon_end=EPSILON_END,
             epsilon_decay=EPSILON_DECAY, memory_capacity=MEMORY_CAPACITY,
             batch_size_replay=BATCH_SIZE_REPLAY,
             per_alpha=PER_ALPHA, per_beta_start=PER_BETA_START,
             per_beta_end=PER_BETA_END, omega=OMEGA, dropout=DQN_DROPOUT,
             attention_k=args.attention_k, attention_a=args.attention_a,
-            episodes_per_round=args.episodes_per_round, device=str(DEVICE)
+            episodes_per_round=args.episodes_per_round, device=str(DEVICE),
+            agent_type=args.agent_type,
+            ppo_clip_epsilon=PPO_CLIP_EPSILON,
+            ppo_epochs=PPO_EPOCHS,
+            ppo_mini_batch_size=PPO_MINI_BATCH_SIZE,
+            ppo_value_coef=PPO_VALUE_COEF,
+            ppo_entropy_coef=PPO_ENTROPY_COEF,
+            ppo_max_grad_norm=PPO_MAX_GRAD_NORM,
+            reward_alpha=r_alpha,
+            reward_beta=r_beta,
+            reward_gamma_fn=r_gamma_fn,
+            reward_delta=r_delta,
+            reward_epsilon_nov=r_eps_nov,
         )
         orchestrator.assign_data(agent_data, test_split_ratio=TEST_SPLIT_RATIO)
 

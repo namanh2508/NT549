@@ -31,6 +31,7 @@ import copy
 import time
 
 from src.reinforcement_learning.agent import DQNAgent
+from src.reinforcement_learning.ppo_agent import PPOAgent
 from src.federated_learning.server import CentralServer
 from src.attention.dynamic_attention import AttentionManager
 from src.utils.metrics import compute_metrics, print_metrics
@@ -58,7 +59,12 @@ class FederatedOrchestrator:
                  epsilon_decay=0.995, memory_capacity=10000, batch_size_replay=64,
                  per_alpha=0.6, per_beta_start=0.4, per_beta_end=1.0,
                  omega=0.5, dropout=0.1, attention_k=30, attention_a=50,
-                 episodes_per_round=3, device='cpu'):
+                 episodes_per_round=3, device='cpu',
+                 agent_type='dqn',
+                 ppo_clip_epsilon=0.2, ppo_epochs=4, ppo_mini_batch_size=64,
+                 ppo_value_coef=0.5, ppo_entropy_coef=0.01, ppo_max_grad_norm=0.5,
+                 reward_alpha=1.0, reward_beta=0.5, reward_gamma_fn=2.0,
+                 reward_delta=0.0, reward_epsilon_nov=0.3):
         """
         Initialize the federated learning system.
 
@@ -68,49 +74,97 @@ class FederatedOrchestrator:
         Args:
             num_agents: Number of distributed agents (default 8 for random split)
             input_dim: Feature dimension (after DAE encoding)
-            hidden_layers: DQN hidden layers
+            hidden_layers: DQN/PPO hidden layers
             num_actions: 2 (binary: normal/attack)
-            lr: DQN learning rate
+            lr: Learning rate
             gamma: RL discount factor (Eq. 2-4, Page 3)
+
+            --- DQN-specific params (used when agent_type='dqn') ---
             epsilon_start/end/decay: Epsilon-greedy params (Alg. 1, Line 2)
             memory_capacity: PER memory size (Alg. 1, Line 3)
             batch_size_replay: PER batch size (Alg. 1, Line 17)
             per_alpha/per_beta_start/per_beta_end: PER params (Section 2.2.3, Page 3)
             omega: Loss weight power (Alg. 1, Line 14)
-            dropout: DQN dropout
+
+            --- PPO-specific params (used when agent_type='ppo') ---
+            ppo_clip_epsilon: PPO clipping parameter ε (Eq. 3.96, Page 72)
+            ppo_epochs: Number of PPO update epochs K (Algorithm 3.8, Step 7)
+            ppo_mini_batch_size: Mini-batch size for PPO updates
+            ppo_value_coef: Coefficient for value loss (c₁)
+            ppo_entropy_coef: Coefficient for entropy bonus (c₂)
+            ppo_max_grad_norm: Max gradient norm for clipping
+
+            --- Advanced Reward params (used with PPO) ---
+            reward_alpha: Weight for True Positive reward
+            reward_beta: Weight for False Positive penalty
+            reward_gamma_fn: Weight for False Negative penalty
+            reward_delta: Weight for latency bonus
+            reward_epsilon_nov: Weight for novelty bonus
+
+            --- Common params ---
+            dropout: Dropout rate
             attention_k: Attention param k (Section 6.1, Page 8)
             attention_a: Attention param a (Section 6.1, Page 8)
             episodes_per_round: Local episodes per federated round
             device: torch device string
+            agent_type: 'dqn' (original) or 'ppo' (improvement)
         """
         self.num_agents = num_agents
         self.input_dim = input_dim
         self.episodes_per_round = episodes_per_round
         self.device = device
+        self.agent_type = agent_type
 
         # === Create distributed agents (Section 4.1, Page 5) ===
         # "multiple agents are deployed on the network in a distributed fashion"
+        # Hỗ trợ cả DQN (bài báo gốc) và PPO (cải tiến)
         self.agents = []
         for i in range(num_agents):
-            agent = DQNAgent(
-                agent_id=i,
-                input_dim=input_dim,
-                hidden_layers=hidden_layers,
-                num_actions=num_actions,
-                lr=lr,
-                gamma=gamma,
-                epsilon_start=epsilon_start,
-                epsilon_end=epsilon_end,
-                epsilon_decay=epsilon_decay,
-                memory_capacity=memory_capacity,
-                batch_size_replay=batch_size_replay,
-                per_alpha=per_alpha,
-                per_beta_start=per_beta_start,
-                per_beta_end=per_beta_end,
-                omega=omega,
-                dropout=dropout,
-                device=device
-            )
+            if agent_type == 'ppo':
+                # === PPO Agent — Cải tiến: thay DQN bằng PPO ===
+                # Reference: Algorithm 3.8, "Deep RL for Wireless", Page 73
+                agent = PPOAgent(
+                    agent_id=i,
+                    input_dim=input_dim,
+                    hidden_layers=hidden_layers,
+                    num_actions=num_actions,
+                    lr=lr,
+                    gamma=gamma,
+                    clip_epsilon=ppo_clip_epsilon,
+                    ppo_epochs=ppo_epochs,
+                    mini_batch_size=ppo_mini_batch_size,
+                    value_coef=ppo_value_coef,
+                    entropy_coef=ppo_entropy_coef,
+                    max_grad_norm=ppo_max_grad_norm,
+                    dropout=dropout,
+                    reward_alpha=reward_alpha,
+                    reward_beta=reward_beta,
+                    reward_gamma_fn=reward_gamma_fn,
+                    reward_delta=reward_delta,
+                    reward_epsilon_nov=reward_epsilon_nov,
+                    device=device
+                )
+            else:
+                # === DQN Agent — Bài báo gốc (Algorithm 1) ===
+                agent = DQNAgent(
+                    agent_id=i,
+                    input_dim=input_dim,
+                    hidden_layers=hidden_layers,
+                    num_actions=num_actions,
+                    lr=lr,
+                    gamma=gamma,
+                    epsilon_start=epsilon_start,
+                    epsilon_end=epsilon_end,
+                    epsilon_decay=epsilon_decay,
+                    memory_capacity=memory_capacity,
+                    batch_size_replay=batch_size_replay,
+                    per_alpha=per_alpha,
+                    per_beta_start=per_beta_start,
+                    per_beta_end=per_beta_end,
+                    omega=omega,
+                    dropout=dropout,
+                    device=device
+                )
             self.agents.append(agent)
 
         # === Central server (Algorithm 2, Page 6) ===
