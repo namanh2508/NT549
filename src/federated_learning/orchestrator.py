@@ -64,7 +64,11 @@ class FederatedOrchestrator:
                  ppo_clip_epsilon=0.2, ppo_epochs=4, ppo_mini_batch_size=64,
                  ppo_value_coef=0.5, ppo_entropy_coef=0.01, ppo_max_grad_norm=0.5,
                  reward_alpha=1.0, reward_beta=0.5, reward_gamma_fn=2.0,
-                 reward_delta=0.0, reward_epsilon_nov=0.3):
+                 reward_delta=0.0, reward_epsilon_nov=0.3, reward_tn=0.2,
+                 aggregate_method='attention',
+                 fltrust_tau=0.5, fltrust_beta=0.5,
+                 fedplus_beta=0.9, fedplus_eta=1.0,
+                 fltrust_proxy_ratio=0.01):
         """
         Initialize the federated learning system.
 
@@ -100,6 +104,24 @@ class FederatedOrchestrator:
             reward_gamma_fn: Weight for False Negative penalty
             reward_delta: Weight for latency bonus
             reward_epsilon_nov: Weight for novelty bonus
+            reward_tn: Weight for True Negative reward (correct normal classification)
+
+            --- Aggregation Method params ---
+            aggregate_method: Aggregation method
+                           'attention' - Original attention-weighted (Algorithm 2, Paper)
+                           'fltrust'   - FLTrust Byzantine-resilient
+                           'attention_fltrust' - Dynamic Attention + FLTrust combined
+                           'fedplus'   - Fed+ with server-side momentum (non-IID)
+                           'fltrust_fedplus' - FLTrust + Fed+ combined
+                           'attention_fltrust_fedplus' - FULL: Attention + FLTrust + Fed+
+            fltrust_tau: Cosine similarity threshold τ for FLTrust (default 0.5)
+                         Reference: FLTRUST.pdf - agents with cos(θ_i) < τ excluded
+            fltrust_beta: Dimension suppression factor β for FLTrust (default 0.5)
+            fedplus_beta: Momentum coefficient β for Fed+ (default 0.9)
+                          Reference: FED+.pdf, Algorithm 1: m_{t+1} = β × m_t + ...
+            fedplus_eta: Learning rate η for Fed+ model update (default 1.0)
+            fltrust_proxy_ratio: Ratio of training data for FLTrust proxy dataset
+                                (default 0.01 = 1% of data)
 
             --- Common params ---
             dropout: Dropout rate
@@ -114,6 +136,11 @@ class FederatedOrchestrator:
         self.episodes_per_round = episodes_per_round
         self.device = device
         self.agent_type = agent_type
+        self.aggregate_method = aggregate_method
+        self.fltrust_proxy_ratio = fltrust_proxy_ratio
+
+        # Store previous weights for Fed+ methods (momentum requires history)
+        self._previous_weights = None
 
         # === Create distributed agents (Section 4.1, Page 5) ===
         # "multiple agents are deployed on the network in a distributed fashion"
@@ -142,6 +169,7 @@ class FederatedOrchestrator:
                     reward_gamma_fn=reward_gamma_fn,
                     reward_delta=reward_delta,
                     reward_epsilon_nov=reward_epsilon_nov,
+                    reward_tn=reward_tn,
                     device=device
                 )
             else:
@@ -168,7 +196,13 @@ class FederatedOrchestrator:
             self.agents.append(agent)
 
         # === Central server (Algorithm 2, Page 6) ===
-        self.server = CentralServer()
+        self.server = CentralServer(
+            aggregate_method=aggregate_method,
+            fltrust_tau=fltrust_tau,
+            fltrust_beta=fltrust_beta,
+            fedplus_beta=fedplus_beta,
+            fedplus_eta=fedplus_eta
+        )
 
         # === Dynamic attention manager (Algorithm 3, Page 6) ===
         # Parameters k and a from Section 6.1, Page 8-10
@@ -228,6 +262,23 @@ class FederatedOrchestrator:
 
             print(f"[Orchestrator] Agent {i}: Train={len(X_train)}, "
                   f"Test(attention)={len(X_test)}")
+
+        # === Setup FLTrust proxy dataset ===
+        # Reference: FLTRUST.pdf - "server has access to a small clean proxy
+        # dataset D_0 (e.g., 0.1% of total data)"
+        # We sample a small portion from agent 0's training data as proxy
+        if self.aggregate_method in ['fltrust', 'fltrust_fedplus', 'attention_fltrust', 'attention_fltrust_fedplus']:
+            if len(self.agent_train_data) > 0:
+                proxy_X, proxy_y = self.agent_train_data[0]
+                n_proxy = max(int(len(proxy_X) * self.fltrust_proxy_ratio), 50)
+                proxy_indices = np.random.choice(len(proxy_X), n_proxy, replace=False)
+                proxy_X_subset = proxy_X[proxy_indices]
+                proxy_y_subset = proxy_y[proxy_indices]
+
+                # Get model template from first agent
+                model_template = self.agents[0].network if self.agent_type == 'ppo' else self.agents[0].dqn
+                self.server.set_proxy_data(proxy_X_subset, proxy_y_subset, model_template)
+                print(f"[FLTrust] Proxy dataset: {n_proxy} samples ({self.fltrust_proxy_ratio*100:.1f}% of agent 0 data)")
 
     def train(self, num_rounds, global_test_X=None, global_test_y=None, verbose=True):
         """
@@ -348,9 +399,20 @@ class FederatedOrchestrator:
             # ============================================================
             # "central server will compute W_sum, sum of network weight
             #  matrices multiplied by their respective attention values"
-            aggregated_weights = self.server.aggregate(
-                agent_weights, attention_values
-            )
+
+            # For Fed+/FLTrust-based methods: pass previous weights for momentum/delta computation
+            if self.aggregate_method in ['fedplus', 'fltrust', 'fltrust_fedplus', 'attention_fltrust', 'attention_fltrust_fedplus']:
+                aggregated_weights = self.server.aggregate(
+                    agent_weights, attention_values,
+                    previous_weights=self._previous_weights
+                )
+            else:
+                aggregated_weights = self.server.aggregate(
+                    agent_weights, attention_values
+                )
+
+            # Update previous_weights for next round
+            self._previous_weights = copy.deepcopy(aggregated_weights)
 
             # ============================================================
             # STEP 4: Distribute aggregated weights to all agents

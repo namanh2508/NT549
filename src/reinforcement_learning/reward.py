@@ -55,7 +55,8 @@ class RewardFunction:
     """
 
     def __init__(self, alpha=1.0, beta=0.5, gamma_fn=2.0, delta=0.0,
-                 epsilon_nov=0.3, use_novelty=True, novelty_hash_bits=16):
+                 epsilon_nov=0.3, tn_reward=0.2, use_novelty=True,
+                 novelty_hash_bits=16):
         """
         Initialize reward function.
 
@@ -77,6 +78,11 @@ class RewardFunction:
                          Mặc định = 0.3
                          Thưởng thêm khi phát hiện đúng pattern attack mới
                          → khuyến khích generalization thay vì memorization
+            tn_reward: Trọng số thưởng cho True Negative (phân loại đúng normal)
+                       Mặc định = 0.2
+                       Thưởng nhẹ khi agent phân loại đúng traffic bình thường.
+                       Giá trị nhỏ hơn alpha vì phát hiện attack khó hơn.
+                       Đặt = 0 nếu muốn dùng công thức gốc không có TN reward.
             use_novelty: Có sử dụng novelty bonus hay không
             novelty_hash_bits: Số bit cho hash fingerprint của state
                                (dùng để xác định pattern đã thấy chưa)
@@ -86,6 +92,7 @@ class RewardFunction:
         self.gamma_fn = gamma_fn
         self.delta = delta
         self.epsilon_nov = epsilon_nov
+        self.tn_reward = tn_reward
         self.use_novelty = use_novelty
 
         # ================================================================
@@ -99,9 +106,6 @@ class RewardFunction:
         self._seen_attack_hashes = set()
         # Đếm số lần mỗi hash xuất hiện để giảm dần novelty bonus
         self._hash_visit_counts = defaultdict(int)
-        # Tổng reward thưởng cho True Negative (phân loại đúng normal)
-        # TN cũng được thưởng nhưng nhẹ hơn TP
-        self.tn_reward = 0.5
 
     def compute(self, action, true_label, state=None, latency=None):
         """
@@ -135,6 +139,7 @@ class RewardFunction:
             # TRUE NEGATIVE: Agent phân loại đúng traffic bình thường
             # Cũng là kết quả tốt, nhưng thưởng ít hơn TP
             # (vì phát hiện attack khó hơn phân loại normal)
+            # tn_reward được config riêng, mặc định = 0.2
             # ============================================================
             reward += self.tn_reward
 

@@ -226,7 +226,7 @@ class PPOAgent:
                  mini_batch_size=64, value_coef=0.5, entropy_coef=0.01,
                  max_grad_norm=0.5, dropout=0.1,
                  reward_alpha=1.0, reward_beta=0.5, reward_gamma_fn=2.0,
-                 reward_delta=0.0, reward_epsilon_nov=0.3,
+                 reward_delta=0.0, reward_epsilon_nov=0.3, reward_tn=0.2,
                  device='cpu'):
         """
         Khởi tạo PPO Agent.
@@ -273,6 +273,7 @@ class PPOAgent:
             reward_gamma_fn: Trọng số FN phạt (NẶNG NHẤT)
             reward_delta: Trọng số latency bonus
             reward_epsilon_nov: Trọng số novelty bonus
+            reward_tn: Trọng số thưởng cho TN (phân loại đúng normal), mặc định 0.2
 
             device: Thiết bị tính toán ('cpu' hoặc 'cuda')
         """
@@ -314,6 +315,7 @@ class PPOAgent:
             gamma_fn=reward_gamma_fn,
             delta=reward_delta,
             epsilon_nov=reward_epsilon_nov,
+            tn_reward=reward_tn,
             use_novelty=True
         )
 

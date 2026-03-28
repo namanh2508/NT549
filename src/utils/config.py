@@ -176,3 +176,53 @@ REWARD_DELTA = 0.0
 
 # Trọng số novelty bonus (thưởng khi phát hiện pattern tấn công mới)
 REWARD_EPSILON_NOV = 0.3
+
+# Trọng số thưởng True Negative (phân loại đúng normal)
+# Mặc định = 0.2, nhỏ hơn alpha vì phát hiện attack quan trọng hơn
+REWARD_TN = 0.2
+
+# ===========================================================================
+# Aggregation Method Configuration
+# Options: 'attention', 'fltrust', 'attention_fltrust', 'fedplus', 'fltrust_fedplus', 'attention_fltrust_fedplus'
+# ===========================================================================
+# 'attention': Original attention-weighted FedAvg (Algorithm 2, Paper)
+# 'fltrust': Byzantine-resilient via cosine similarity filtering (FLTRUST.pdf)
+# 'attention_fltrust': Dynamic Attention + FLTrust combined
+#                = attention_values (Algorithm 3) × trust_scores (FLTrust)
+# 'fedplus': Server momentum for non-IID data correction (FED+.pdf)
+# 'fltrust_fedplus': FLTrust filtering + Fed+ momentum combined
+# 'attention_fltrust_fedplus': FULL - Dynamic Attention + FLTrust + Fed+ combined
+AGGREGATE_METHOD = 'attention'
+
+# ===========================================================================
+# FLTrust Configuration (Byzantine-resilient Aggregation)
+# Reference: FLTRUST.pdf - "FLTrust: Byzantine-resilient Federated Learning
+# via Trust Server" - Equations 7-8
+# ===========================================================================
+# Cosine similarity threshold τ (tau)
+# Agents with cos(θ_i) < τ are excluded as Byzantine
+# Reference: FLTRUST.pdf - default τ = 0.5
+FLTRUST_TAU = 0.5
+
+# Dimension suppression factor β (beta)
+# Reference: FLTRUST.pdf, Equation 7
+FLTRUST_BETA = 0.5
+
+# Ratio of training data used as proxy dataset for trusted direction
+# Reference: FLTRUST.pdf - "server has access to a small clean proxy
+# dataset D_0 (e.g., 0.1% of total data)"
+FLTRUST_PROXY_RATIO = 0.01  # 1% of data
+
+# ===========================================================================
+# Fed+ Configuration (Server-side Momentum for Non-IID)
+# Reference: FED+.pdf - "FED+: A Unified Framework for Byzantine-Resilient
+# Federated Learning" - Algorithm 1: momentum update rule
+# ===========================================================================
+# Momentum coefficient β
+# Reference: FED+.pdf, Algorithm 1: m_{t+1} = β × m_t + Σ(n_i/n) × Δw_i
+# Typical value: 0.9
+FEDPLUS_BETA = 0.9
+
+# Learning rate η for Fed+ model update
+# Reference: FED+.pdf: w_{t+1} = w_t - η × m_{t+1}
+FEDPLUS_ETA = 1.0

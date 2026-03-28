@@ -11,5 +11,10 @@ https://www.kaggle.com/datasets/phungvannamanh/nsl-kdd
 https://www.kaggle.com/datasets/phungvannamanh/nt549-full-dataset
 
 research gap
-1. mục 2.2.1 và 2.2.2 tác giả sử dụng các thuật toán Qlearning, DQN chuẩn đúng như đã học, nhưng pseudocode của thuật toán 1 lại có công thức khác 
+1. mục 2.2.1 và 2.2.2 tác giả sử dụng các thuật toán Qlearning, DQN chuẩn đúng như đã học, nhưng pseudocode của thuật toán 1 lại có công thức khác dẫn theo PER TD error sai 
 2. với baseline hiện tại mà train trên dataset mới IoMT thì bị FPR cao, còn cross-dataset thì bị TN = 0 
+
+Cải tiến 
+có thêm TN reward thấp để việc phát hiện normal không quan trọng bằng attack
+
+kết hợp fed+ fedtrust dynamic attention
