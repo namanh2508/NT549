@@ -6,7 +6,10 @@ chọn dataset này vì 2025 còn mới chưa ổn định và các dataset khá
 Federated reinforcement learning based intrusion detection system using dynamic attention mechanism - baseline chính 
 Intrusion detection approach for industrial internet of things traffic using deep recurrent reinforcement learning assisted federated learning - reference
 UNSW-NB15 để test
-
+Fed-Inforce-Fusion: A federated reinforcement-based fusion model for security and privacy protection of IoMT networks against cyber-attacks
+FSAC- AFedAvg: Federated Soft Actor-Critic reinforcement learning based Intrusion Detection System with Adaptive Federated Averaging
+Reinforcement learning-based drone-client selection for efficient federated learning-based intrusion detection in FANETs
+Sfedrl-ids: secure federated deep reinforcement learning-based intrusion detection system for agricultural internet of things
 https://www.kaggle.com/datasets/phungvannamanh/nsl-kdd
 https://www.kaggle.com/datasets/phungvannamanh/nt549-full-dataset
 

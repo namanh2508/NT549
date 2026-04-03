@@ -226,3 +226,88 @@ FEDPLUS_BETA = 0.9
 # Learning rate η for Fed+ model update
 # Reference: FED+.pdf: w_{t+1} = w_t - η × m_{t+1}
 FEDPLUS_ETA = 1.0
+
+# ===========================================================================
+# Decision-Making RL Configuration (Improvement: Classification → Decision)
+# Agent chọn action phù hợp với attack category thay vì chỉ phân loại
+# ===========================================================================
+# Số actions cho decision-making
+# 0=ALLOW, 1=DROP, 2=BLOCK_SRC, 3=RATE_LIMIT, 4=ALERT, 5=MONITOR, 6=ISOLATE
+NUM_DECISION_ACTIONS = 7
+
+# Attack categories (0-4): Normal, DoS, Probe, R2L, U2R
+ATTACK_CATEGORIES = ['Normal', 'DoS', 'Probe', 'R2L', 'U2R']
+
+# Severity score cho mỗi attack category (0-4 scale)
+# U2R nguy hiểm nhất (privilege escalation), Normal không nguy hiểm
+ATTACK_SEVERITY = {
+    'Normal': 0,
+    'DoS': 2,
+    'Probe': 1,
+    'R2L': 3,
+    'U2R': 4,
+}
+
+# Delayed cost của mỗi response action (ảnh hưởng đến network usability)
+# BLOCK_SRC và ISOLATE có chi phí cao vì ảnh hưởng đến legitimate traffic
+RESPONSE_COST = {
+    'ALLOW': 0.0,
+    'DROP': 0.1,
+    'BLOCK_SRC': 0.5,
+    'RATE_LIMIT': 0.2,
+    'ALERT': 0.0,
+    'MONITOR': 0.0,
+    'ISOLATE': 0.8,
+}
+
+# Trọng số penalty cho cumulative impact (quá nhiều block/allow)
+# Càng cao → càng nghiêm ngặt về việc block legitimate traffic
+USABILITY_WEIGHT = 0.1
+
+# Ngưỡng block ratio tối đa trước khi bị penalty
+# Nếu block/allowed > 0.1 → bắt đầu bị penalty
+MAX_BLOCK_RATIO = 0.1
+
+# ===========================================================================
+# Scalable Decision-Making RL Configuration (SCALABLE - Học từ feedback)
+#============================================================================
+# Agent có khả năng:
+# 1. Học từ reward feedback cho novel attacks
+# 2. Generalized attack taxonomy (MITRE ATT&CK inspired)
+# 3. Online learning Q-values cho từng attack type
+# 4. Exploration cho unknown attacks
+#============================================================================
+# Số actions cho scalable decision-making (8 thay vì 7)
+# 0=ALLOW, 1=LOG_ALERT, 2=RATE_LIMIT, 3=DROP_CONNECTION,
+# 4=BLOCK_SOURCE_TEMPORARY, 5=BLOCK_SOURCE_PERMANENT, 6=ISOLATE, 7=INVESTIGATE
+NUM_SCALABLE_ACTIONS = 8
+
+# Online learning parameters
+USE_ONLINE_LEARNING = True       # Học từ reward feedback
+EXPLORATION_RATE = 0.3           # Epsilon-greedy exploration rate
+LEARNING_RATE_Q = 0.1             # Learning rate cho Q-value updates
+
+# Novel attack handling
+EXPLOIT_NOVEL_THRESHOLD = 10     # Số lần thấy novel attack trước khi exploit
+NOVEL_ATTACK_SEVERITY_DEFAULT = 2  # Default severity cho unknown attacks (medium)
+
+# ===========================================================================
+# Hierarchical Multi-Agent PPO Configuration (Manager + Worker)
+# Manager: Chọn attack category (coarse-grained)
+# Worker: Chọn response action dựa trên category từ Manager (fine-grained)
+# ===========================================================================
+# Agent type selection: 'ppo', 'hierarchical_ppo', 'scalable_ppo'
+AGENT_TYPE = 'ppo'
+
+# Attack categories count (0-4): Normal, DoS, Probe, R2L, U2R
+NUM_CATEGORIES = 5
+
+# Number of hierarchical response actions (fine-grained decisions)
+# 0=ALLOW, 1=LOG_ALERT, 2=RATE_LIMIT, 3=DROP, 4=BLOCK_TEMP,
+# 5=BLOCK_PERM, 6=ISOLATE, 7=INVESTIGATE
+NUM_HIERARCHICAL_ACTIONS = 8
+
+# Hierarchical PPO learning rates
+HIERARCHICAL_LR_MANAGER = 3e-4  # Learning rate for Manager agent
+HIERARCHICAL_LR_WORKER = 3e-4  # Learning rate for Worker agent
+HIERARCHICAL_LR_CRITIC = 1e-3  # Learning rate for shared Critic

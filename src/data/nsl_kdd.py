@@ -173,6 +173,94 @@ def get_attack_category(label_str):
     return ATTACK_CATEGORY_MAP.get(label_str, 'Unknown')
 
 
+# ============================================================================
+# Attack category encoding for decision-making RL
+# ============================================================================
+# Category indices for multi-class classification (used by DecisionRewardFunction)
+ATTACK_CATEGORY_INDEX = {
+    'Normal': 0,
+    'DoS': 1,
+    'Probe': 2,
+    'R2L': 3,
+    'U2R': 4,
+}
+ATTACK_CATEGORY_NAMES = ['Normal', 'DoS', 'Probe', 'R2L', 'U2R']
+
+
+def preprocess_nsl_kdd_multiclass(train_df, test_df):
+    """
+    Preprocess NSL-KDD dataset for multi-class attack category classification.
+
+    Used for Decision-Making RL where agent must:
+    1. Recognize attack category (Normal, DoS, Probe, R2L, U2R)
+    2. Select appropriate response action based on category
+
+    This function returns category labels instead of binary labels.
+
+    Args:
+        train_df, test_df: Raw DataFrames with original attack type labels
+    Returns:
+        X_train, y_train, y_category_train, X_test, y_category_test: numpy arrays
+        scaler: fitted MinMaxScaler
+        feature_dim: int, number of features after preprocessing
+
+    y_category contains attack category indices:
+        0 = Normal, 1 = DoS, 2 = Probe, 3 = R2L, 4 = U2R
+    """
+    # Step 1: Drop difficulty_level (last column, not a network feature)
+    train_df = train_df.drop('difficulty_level', axis=1)
+    test_df = test_df.drop('difficulty_level', axis=1)
+
+    # Step 2: Map to attack categories (5 classes)
+    # Store original labels before converting to indices
+    train_categories = train_df['label'].apply(get_attack_category).values
+    test_categories = test_df['label'].apply(get_attack_category).values
+
+    # Convert category names to indices
+    y_category_train = np.array([ATTACK_CATEGORY_INDEX.get(cat, -1) for cat in train_categories])
+    y_category_test = np.array([ATTACK_CATEGORY_INDEX.get(cat, -1) for cat in test_categories])
+
+    # Binary label still needed for backward compatibility with existing metrics
+    train_df['label'] = (y_category_train > 0).astype(int)
+    test_df['label'] = (y_category_test > 0).astype(int)
+
+    # Separate features and binary labels
+    y_train = train_df['label'].values
+    y_test = test_df['label'].values
+    train_df = train_df.drop('label', axis=1)
+    test_df = test_df.drop('label', axis=1)
+
+    # Step 3: One-hot encode categorical features
+    categorical_cols = ['protocol_type', 'service', 'flag']
+
+    train_df = pd.get_dummies(train_df, columns=categorical_cols, dtype=float)
+    test_df = pd.get_dummies(test_df, columns=categorical_cols, dtype=float)
+
+    # Align: keep only train columns (unseen test categories → 0)
+    test_df = test_df.reindex(columns=train_df.columns, fill_value=0.0)
+
+    X_train = train_df.values.astype(np.float32)
+    X_test = test_df.values.astype(np.float32)
+
+    # Step 4: Normalize features using MinMaxScaler
+    scaler = MinMaxScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+
+    feature_dim = X_train.shape[1]
+
+    # Print distribution by category
+    print(f"[Preprocessing] Feature dimension after encoding: {feature_dim}")
+    print(f"[Preprocessing] Training samples: {len(X_train)}")
+    print(f"[Preprocessing] Testing samples: {len(X_test)}")
+    print(f"[Preprocessing] Train category distribution:")
+    for cat, idx in ATTACK_CATEGORY_INDEX.items():
+        count = np.sum(y_category_train == idx)
+        print(f"  {cat}: {count}")
+
+    return X_train, y_train, y_category_train, X_test, y_test, y_category_test, scaler, feature_dim
+
+
 def distribute_data_random(X, y, num_agents, seed=42):
     """
     Random/Uniform data distribution among agents.
