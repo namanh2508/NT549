@@ -507,11 +507,7 @@ This momentum mechanism smooths the aggregation process, reducing the impact of 
 
 We combine all three aggregation mechanisms into a unified framework:
 
-\begin{enumerate}
-    \item \textbf{Dynamic Attention}: Compute attention weights based on agent accuracy
-    \item \textbf{FLTrust Filtering}: Apply cosine similarity filtering to exclude Byzantine agents
-    \item \textbf{Fed+ Momentum}: Apply server-side momentum to handle non-IID distributions
-\end{enumerate}
+We combine all three aggregation mechanisms into a unified framework. Dynamic Attention computes attention weights based on agent accuracy. FLTrust Filtering applies cosine similarity filtering to exclude Byzantine agents. Fed+ Momentum applies server-side momentum to handle non-IID distributions.
 
 The combined weight for agent $i$ is:
 
@@ -554,9 +550,9 @@ To handle novel attack types without manual retraining, we introduce a scalable 
 Instead of hardcoding specific attack names (e.g., Neptune, IPSweep), we classify attacks into generalized categories based on MITRE ATT\&CK framework principles:
 
 \begin{table}[htbp]
+\centering
 \caption{Attack Taxonomy Categories}
-\begin{center}
-\begin{tabular}{llp{3cm}}
+\begin{tabular}{lll}
 \toprule
 \textbf{Category} & \textbf{Severity} & \textbf{Examples} \\
 \midrule
@@ -573,7 +569,6 @@ MALWARE & 4 & Ransomware, botnet \\
 UNKNOWN & 2 & Novel attacks \\
 \bottomrule
 \end{tabular}
-\end{center}
 \end{table}
 
 Each attack category has associated severity and network/data impact scores that inform the reward function.
@@ -626,11 +621,7 @@ When encountering a novel attack (UNKNOWN category), the system uses $\epsilon$-
 \end{algorithmic}
 \end{algorithm}
 
-The key advantage is that when a novel attack is encountered:
-1. The system classifies it as UNKNOWN with default severity 2
-2. Exploration finds effective responses through feedback
-3. Learned responses are cached for future encounters
-4. No manual retraining or hardcoding required
+The key advantage is that when a novel attack is encountered, the system classifies it as UNKNOWN with default severity 2, exploration finds effective responses through feedback, learned responses are cached for future encounters, and no manual retraining or hardcoding is required.
 
 % --------------------------------------------------------------------------
 % IV-G. Hierarchical Multi-Agent RL
@@ -789,20 +780,9 @@ The log-probability of a sampled action is:
 
 The system uses an \textbf{online learning reward framework} with Q-value updates per attack category. Each attack is mapped to a generalized taxonomy (MITRE ATT\&CK-inspired: BENIGN, RECON, DOS, EXPLOITATION, PRIV\_ESC, LATERAL, EXFILTRATION, PERSISTENCE, EVASION, MALWARE, UNKNOWN).
 
-For novel attacks not matching known signatures, the UNKNOWN category (severity=2) is assigned, triggering an exploration mode:
+For novel attacks not matching known signatures, the UNKNOWN category (severity=2) is assigned, triggering an exploration mode. The agent starts with optimistic Q-values for moderate blocking responses, exploration bonus encourages trying different response magnitudes, and after sufficient interactions (default: 10), the learned Q-values guide exploitation.
 
-\begin{itemize}
-    \item The agent starts with optimistic Q-values for moderate blocking responses
-    \item Exploration bonus encourages trying different response magnitudes
-    \item After sufficient interactions (default: 10), the learned Q-values guide exploitation
-\end{itemize}
-
-The reward for continuous actions incorporates:
-\begin{enumerate}
-    \item \textbf{Base reward}: Appropriateness of action magnitude for the attack category
-    \item \textbf{Learned component}: Q-value estimate from online learning
-    \item \textbf{Cumulative impact penalty}: Discourages over-blocking legitimate traffic
-\end{enumerate}
+The reward for continuous actions incorporates three components. The base reward evaluates appropriateness of action magnitude for the attack category. The learned component uses Q-value estimate from online learning. The cumulative impact penalty discourages over-blocking legitimate traffic.
 
 \subsubsection{Comparison with Discrete Actions}
 
@@ -812,22 +792,17 @@ Table~\ref{tab:continuous_vs_discrete} compares the two approaches.
 \centering
 \caption{Continuous vs. Discrete Action Space for PPO-based IDS}
 \label{tab:continuous_vs_discrete}
-\begin{tabular}{l|c|c}
-\hline
+\begin{tabular}{lcc}
+\toprule
 \textbf{Criterion} & \textbf{Discrete Actions} & \textbf{Continuous Actions} \\
-\hline
+\midrule
 Action representation & Single categorical choice & 4-dimensional real vector \\
-\hline
 Response granularity & Fixed levels (7--8 options) & Infinite precision (0--1) \\
-\hline
 Novel attack handling & Fixed response matrix & Learned magnitude via exploration \\
-\hline
 PPO algorithm & Categorical distribution & Gaussian distribution \\
-\hline
 Interpretability & Action name directly meaningful & Requires thresholding magnitude \\
-\hline
 Training stability & Moderate & Requires std clipping ($\sigma \in [e^{-20}, e^{2}]$) \\
-\hline
+\bottomrule
 \end{tabular}
 \end{table}
 
@@ -861,8 +836,8 @@ FLTrust parameters: $\tau=0.5$, $\beta=0.5$, proxy ratio 1\%. Fed+ parameters: $
 \subsection{Same-Domain Results (Scenario A: NSL-KDD)}
 
 \begin{table}[htbp]
+\centering
 \caption{NSL-KDD Same-Domain Results}
-\begin{center}
 \begin{tabular}{lcccccc}
 \toprule
 \textbf{Method} & \textbf{Acc} & \textbf{Precision} & \textbf{Recall} & \textbf{FPR} & \textbf{F1} & \textbf{AUC} \\
@@ -876,22 +851,15 @@ PPO + Attention & 0.9150 & 0.9159 & \textbf{0.9947} & 0.6670 & 0.9537 & \textbf{
 DQN + Attention-FLTrust-Fed+ & 0.9149 & 0.9159 & 0.9947 & 0.6670 & 0.9537 & 0.9530 \\
 \bottomrule
 \end{tabular}
-\end{center}
 \end{table}
 
-Key observations:
-\begin{itemize}
-    \item PPO achieves significantly higher AUC-ROC (+4.7\% over DQN) on NSL-KDD, indicating better discrimination ability
-    \item Attention mechanism improves accuracy dramatically (+14.7\% for DQN)
-    \item PPO with attention achieves near-perfect recall (99.47\%) but at the cost of higher FPR
-    \item The combined aggregation method maintains high recall while providing Byzantine resilience
-\end{itemize}
+Key observations from the same-domain experiments are as follows. PPO achieves significantly higher AUC-ROC (+4.7\% over DQN) on NSL-KDD, indicating better discrimination ability. The attention mechanism improves accuracy dramatically (+14.7\% for DQN). PPO with attention achieves near-perfect recall (99.47\%) but at the cost of higher FPR. The combined aggregation method maintains high recall while providing Byzantine resilience.
 
 \subsection{Cross-Domain Results (Scenario C: IoT$\rightarrow$IIoT)}
 
 \begin{table}[htbp]
+\centering
 \caption{Cross-Domain Generalization (Train: CIC-IoMT-2024, Test: CIC-Edge-IIoTSet-2022)}
-\begin{center}
 \begin{tabular}{lcccccc}
 \toprule
 \textbf{Method} & \textbf{Acc} & \textbf{Precision} & \textbf{Recall} & \textbf{FPR} & \textbf{F1} & \textbf{AUC} \\
@@ -900,7 +868,6 @@ DQN + Attention & 0.8637 & 0.8703 & 0.9912 & 1.0000 & 0.9269 & 0.4955 \\
 PPO + Attention & 0.8687 & 0.8710 & 0.9970 & 1.0000 & 0.9297 & 0.2825 \\
 \bottomrule
 \end{tabular}
-\end{center}
 \end{table}
 
 Cross-domain results reveal that FPR=1.0 indicates the model is heavily biased toward the attack class, likely due to distribution shift between IoT and IIoT datasets. The scalable decision-making architecture addresses this by learning appropriate responses through online feedback.
@@ -922,20 +889,11 @@ The proposed scalable decision-making architecture addresses real-world deployme
 
 \subsection{Privacy Preservation}
 
-All improvements maintain federated learning's privacy guarantees:
-\begin{itemize}
-    \item Raw data never leaves local agents
-    \item Only model weights (gradients) are shared with the server
-    \item FLTrust's proxy dataset can be synthetically generated or use publicly available baseline data
-\end{itemize}
+All improvements maintain federated learning's privacy guarantees. Raw data never leaves local agents, only model weights (gradients) are shared with the server, and FLTrust's proxy dataset can be synthetically generated or use publicly available baseline data.
 
 \subsection{Limitations}
 
-\begin{itemize}
-    \item Cross-domain generalization remains challenging due to feature distribution shift
-    \item The scalability of online learning depends on having sufficient exploration episodes
-    \item Byzantine resilience assumes the server and proxy dataset are not compromised
-\end{itemize}
+Despite the improvements, three limitations remain. Cross-domain generalization remains challenging due to feature distribution shift. The scalability of online learning depends on having sufficient exploration episodes. Byzantine resilience assumes the server and proxy dataset are not compromised.
 
 % ============================================================================
 % VII. CONCLUSION
