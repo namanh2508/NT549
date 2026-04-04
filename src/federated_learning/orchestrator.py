@@ -34,7 +34,6 @@ from src.reinforcement_learning.agent import DQNAgent
 from src.reinforcement_learning.ppo_agent import PPOAgent
 from src.reinforcement_learning.decision_ppo_agent import DecisionPPOAgent
 from src.reinforcement_learning.hierarchical_ppo_agent import HierarchicalPPOAgent
-from src.reinforcement_learning.scalable_continuous_ppo_agent import ScalableContinuousPPOAgent
 from src.federated_learning.server import CentralServer
 from src.attention.dynamic_attention import AttentionManager
 from src.utils.metrics import compute_metrics, print_metrics
@@ -196,9 +195,10 @@ class FederatedOrchestrator:
                     device=device
                 )
             elif agent_type == 'hierarchical_ppo':
-                # === Hierarchical PPO Agent — Manager + Worker Architecture ===
-                # Manager classifies attack category (Normal, DoS, Probe, R2L, U2R)
-                # Worker selects action given category (ALLOW, DROP, RATE_LIMIT...)
+                # === Unified Hierarchical PPO Agent ===
+                # Manager classifies attack category (11 MITRE ATT&CK categories)
+                # Worker outputs continuous 4D action (Gaussian policy)
+                # Online learning: Q-values per category updated from feedback
                 # Reference: HierarchicalPPOAgent in hierarchical_ppo_agent.py
                 agent = HierarchicalPPOAgent(
                     agent_id=i,
@@ -207,38 +207,6 @@ class FederatedOrchestrator:
                     lr_manager=lr,
                     lr_worker=lr,
                     lr_critic=lr,
-                    gamma=gamma,
-                    clip_epsilon=ppo_clip_epsilon,
-                    ppo_epochs=ppo_epochs,
-                    mini_batch_size=ppo_mini_batch_size,
-                    value_coef=ppo_value_coef,
-                    entropy_coef=ppo_entropy_coef,
-                    max_grad_norm=ppo_max_grad_norm,
-                    dropout=dropout,
-                    device=device
-                )
-            elif agent_type == 'scalable_continuous_ppo':
-                # === Scalable Continuous Action PPO Agent — CONTINUOUS ACTION SPACE ===
-                # PPO hoạt động tốt trên continuous action space
-                # Continuous action dimensions:
-                #   action[0]: block_duration (0-300 seconds)
-                #   action[1]: throttle_rate (0-100 %)
-                #   action[2]: alert_severity (0.0-1.0)
-                #   action[3]: log_verbosity (0-10)
-                # Actor outputs: mean và std cho mỗi dimension
-                # π_θ(a|s) = Normal(μ(s), σ(s))
-                #
-                # Scalable features:
-                # 1. Học từ reward feedback cho novel attacks
-                # 2. Generalized attack taxonomy (MITRE ATT&CK inspired)
-                # 3. Online learning Q-values cho từng attack type
-                # 4. Exploration cho unknown attacks
-                agent = ScalableContinuousPPOAgent(
-                    agent_id=i,
-                    input_dim=input_dim,
-                    hidden_layers=hidden_layers,
-                    action_dim=4,  # 4 continuous dimensions
-                    lr=lr,
                     gamma=gamma,
                     clip_epsilon=ppo_clip_epsilon,
                     ppo_epochs=ppo_epochs,
@@ -354,7 +322,7 @@ class FederatedOrchestrator:
                 proxy_y_subset = proxy_y[proxy_indices]
 
                 # Get model template from first agent
-                if self.agent_type in ('ppo', 'decision_ppo', 'scalable_continuous_ppo'):
+                if self.agent_type in ('ppo', 'decision_ppo'):
                     model_template = self.agents[0].network
                 elif self.agent_type == 'hierarchical_ppo':
                     model_template = self.agents[0].get_network()

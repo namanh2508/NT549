@@ -796,82 +796,93 @@ class CentralServer:
             if previous_weights is not None:
                 d_0 = self._compute_proxy_gradient_direction(previous_weights)
 
-        # Initialize history entry
+        # Initialize history entry — append FIRST before any log writes
         history_entry = {
             'round': self.round_number,
             'num_agents': num_agents,
             'method': self.aggregate_method,
             'attention_values': list(attention_values),
         }
+        self.aggregation_history.append(history_entry)
 
         # Route to appropriate aggregation method
         if self.aggregate_method == 'attention':
             aggregated = self._aggregate_attention(agent_weights, attention_values)
 
         elif self.aggregate_method == 'fltrust':
-            aggregated = self._aggregate_fltrust(
-                agent_weights, attention_values, agent_deltas, d_0
-            )
+            # Round-1 fallback: no previous_weights → use uniform average, skip FLTrust filtering
+            if previous_weights is None or d_0 is None:
+                print("[FLTrust] Round 1: no previous_weights/d_0, falling back to uniform average")
+                aggregated = self._aggregate_attention(agent_weights, [1.0 / num_agents] * num_agents)
+                self.aggregation_history[-1]['fltrust'] = {
+                    'round_1_fallback': True,
+                    'reason': 'previous_weights or d_0 not available',
+                }
+            else:
+                aggregated = self._aggregate_fltrust(
+                    agent_weights, attention_values, agent_deltas, d_0
+                )
 
         elif self.aggregate_method == 'attention_fltrust':
-            # =========================================================================
-            # DYNAMIC ATTENTION + FLTRUST COMBINED
-            # =========================================================================
-            # attention_values đến từ Algorithm 3 (Dynamic Attention của bài báo gốc)
-            # → Đã tính: attention_i = n_i × (1 + k×(1-acc_i)×a^(-acc_i))
-            #
-            # trust_scores đến từ FLTrust
-            # → Đo lường: cosine similarity với proxy gradient direction
-            #
-            # Final weight = attention × trust_score
-            # =========================================================================
-            aggregated = self._aggregate_attention_fltrust(
-                agent_weights, attention_values, agent_deltas, d_0
-            )
+            # Round-1 fallback: uniform attention weights, skip FLTrust filtering
+            if previous_weights is None or d_0 is None:
+                print("[Attention+FLTrust] Round 1: falling back to uniform average")
+                aggregated = self._aggregate_attention(agent_weights, [1.0 / num_agents] * num_agents)
+                self.aggregation_history[-1]['attention_fltrust'] = {
+                    'round_1_fallback': True,
+                }
+            else:
+                aggregated = self._aggregate_attention_fltrust(
+                    agent_weights, attention_values, agent_deltas, d_0
+                )
 
         elif self.aggregate_method == 'fedplus':
             if previous_weights is None:
-                raise ValueError(
-                    "Fed+ requires previous_weights (global model from round t-1)"
+                # Round-1 fallback: standard attention aggregation without momentum
+                print("[Fed+] Round 1: no previous_weights, falling back to attention")
+                aggregated = self._aggregate_attention(agent_weights, attention_values)
+                self.aggregation_history[-1]['fedplus'] = {
+                    'round_1_fallback': True,
+                    'momentum_applied': False,
+                }
+            else:
+                aggregated = self._aggregate_fedplus(
+                    agent_weights, attention_values, previous_weights
                 )
-            aggregated = self._aggregate_fedplus(
-                agent_weights, attention_values, previous_weights
-            )
+                self.aggregation_history[-1]['fedplus'] = {
+                    'round_1_fallback': False,
+                    'momentum_applied': True,
+                }
 
         elif self.aggregate_method == 'fltrust_fedplus':
-            if previous_weights is None:
-                raise ValueError(
-                    "FLTrust+Fed+ requires previous_weights (global model from round t-1)"
+            if previous_weights is None or d_0 is None:
+                print("[FLTrust+Fed+] Round 1: falling back to uniform average")
+                aggregated = self._aggregate_attention(agent_weights, [1.0 / num_agents] * num_agents)
+                self.aggregation_history[-1]['fltrust_fedplus'] = {
+                    'round_1_fallback': True,
+                }
+            else:
+                aggregated = self._aggregate_fltrust_fedplus(
+                    agent_weights, attention_values, previous_weights,
+                    agent_deltas, d_0
                 )
-            aggregated = self._aggregate_fltrust_fedplus(
-                agent_weights, attention_values, previous_weights,
-                agent_deltas, d_0
-            )
 
         elif self.aggregate_method == 'attention_fltrust_fedplus':
-            # =========================================================================
-            # DYNAMIC ATTENTION + FLTRUST + FED+ COMBINED — Full Defense
-            # =========================================================================
-            # Kết hợp đầy đủ cả 3:
-            #   1. Dynamic Attention (Algorithm 3) → weight theo accuracy + data qty
-            #   2. FLTrust → lọc Byzantine agents bằng cosine similarity
-            #   3. Fed+ → momentum cho non-IID convergence
-            #
-            # Final = Fed+( attention × trust_score × W_i )
-            # =========================================================================
-            if previous_weights is None:
-                raise ValueError(
-                    "Attention+FLTrust+Fed+ requires previous_weights (global model from round t-1)"
+            if previous_weights is None or d_0 is None:
+                print("[Attention+FLTrust+Fed+] Round 1: falling back to uniform average")
+                aggregated = self._aggregate_attention(agent_weights, [1.0 / num_agents] * num_agents)
+                self.aggregation_history[-1]['attention_fltrust_fedplus'] = {
+                    'round_1_fallback': True,
+                }
+            else:
+                aggregated = self._aggregate_attention_fltrust_fedplus(
+                    agent_weights, attention_values, previous_weights,
+                    agent_deltas, d_0
                 )
-            aggregated = self._aggregate_attention_fltrust_fedplus(
-                agent_weights, attention_values, previous_weights,
-                agent_deltas, d_0
-            )
 
         else:
             raise ValueError(f"Unknown aggregation method: {self.aggregate_method}")
 
-        self.aggregation_history.append(history_entry)
         self.aggregated_weights = aggregated
 
         return aggregated

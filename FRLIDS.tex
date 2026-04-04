@@ -161,6 +161,8 @@ DQN & NSL-KDD & 78\% & Data privacy requirement \\
 
 Table~\ref{tab:fed_comparison} compares our proposed FDRL-IDS with existing federated RL-based IDS approaches.
 
+Recent domain-specific studies further motivate a broader comparison than the original baseline alone. PriFED-IDS investigates privacy-preserving federated reinforcement learning for digital health intrusion detection \cite{prifed_ids}. In industrial IoT, GRU-assisted federated learning combined with deep reinforcement learning-based device selection improves intrusion detection under heterogeneous traffic conditions \cite{gru_fl}. Sfedrl-IDS focuses on secure federated deep reinforcement learning for agricultural IoT and emphasizes secure collaborative training \cite{sfedrl_ids}. In highly dynamic wireless environments, reinforcement learning has also been used for drone-client selection in federated IDS for FANETs \cite{fanet_rl}. Collectively, these studies show that federated RL is promising across domains, but robustness, non-IID correction, and scalable response design are still mostly addressed separately rather than within a unified IDS framework.
+
 \begin{table}[htbp]
 \caption{Comparison of Federated RL-Based IDS Methods}
 \label{tab:fed_comparison}
@@ -187,16 +189,16 @@ FANET-RL & RL client selection & Selection-based & No & Yes & No & FANETs \\
 Despite significant advances in federated RL-based IDS, several research gaps remain:
 
 \begin{enumerate}
-    \item \textbf{Byzantine Resilience}: Most existing works do not address Byzantine attacks where compromised agents submit malicious updates. Only Sfedrl-IDS considers this aspect.
+    \item \textbf{Byzantine Resilience}: Most existing works emphasize privacy preservation or client efficiency, but do not explicitly defend against malicious model updates. Among the compared federated RL systems, Sfedrl-IDS is one of the few studies that more directly emphasizes secure collaborative learning \cite{sfedrl_ids}.
 
     \item \textbf{Hierarchical Decision-Making}: No existing work decomposes the detection problem into hierarchical category classification and action selection, limiting interpretability.
 
-    \item \textbf{Combined Non-IID + Byzantine}: Combining Fed+ for non-IID handling with FLTrust for Byzantine resilience has not been explored.
+    \item \textbf{Combined Non-IID + Byzantine}: Existing studies typically focus on either non-IID robustness, privacy preservation, secure aggregation, or adaptive client selection. A unified integration of dynamic attention, FLTrust-style trust filtering, and Fed+-style server momentum remains insufficiently explored for IDS-oriented federated RL.
 
     \item \textbf{Novel Attack Handling}: Most systems require manual retraining for new attack types, lacking continuous learning capability.
 \end{enumerate}
 
-Our proposed FDRL-IDS addresses all these gaps through a unified framework combining hierarchical MARL, Byzantine-resilient aggregation, and online learning.
+Our proposed FDRL-IDS addresses these gaps through a unified framework combining policy-based reinforcement learning, trust-aware federated aggregation, non-IID-aware server momentum, and scalable decision-making with online adaptation.
 
 % ============================================================================
 % III. BACKGROUND AND PROBLEM STATEMENT
@@ -870,7 +872,7 @@ PPO + Attention & 0.8687 & 0.8710 & 0.9970 & 1.0000 & 0.9297 & 0.2825 \\
 \end{tabular}
 \end{table}
 
-Cross-domain results reveal that FPR=1.0 indicates the model is heavily biased toward the attack class, likely due to distribution shift between IoT and IIoT datasets. The scalable decision-making architecture addresses this by learning appropriate responses through online feedback.
+Cross-domain results reveal that FPR=1.0 indicates the model is heavily biased toward the attack class, likely due to severe distribution shift between IoT and IIoT datasets. This behavior is consistent with prior IDS literature showing that machine learning models often degrade sharply outside the original closed-world distribution \cite{sommer}. Therefore, the cross-domain experiment should be interpreted as a stress test that highlights the need for online adaptation and scalable decision-making, rather than as a fully solved generalization setting.
 
 % ============================================================================
 % VI. DISCUSSION
@@ -914,9 +916,9 @@ Future work includes integrating domain adaptation techniques to improve cross-d
 \begin{thebibliography}{00}
 
 \bibitem{original_paper}
-M. S. H., 
-``Federated reinforcement learning based intrusion detection system using dynamic attention mechanism,'' 
-\textit{Journal of Information Security and Applications}, vol. 78, 2023.
+S. Vadigi, K. Sethi, D. Mohanty, S. P. Das, and P. Bera,
+``Federated reinforcement learning based intrusion detection system using dynamic attention mechanism,''
+\textit{Journal of Information Security and Applications}, vol. 78, Art. no. 103608, 2023.
 
 \bibitem{federated_avg}
 B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas, 
@@ -971,16 +973,37 @@ R. Sommer and V. Paxson,
 ``Outside the closed world: On using machine learning for network intrusion detection,''
 in \textit{Proc. IEEE Symposium on Security and Privacy}, 2010, pp. 305--316.
 
+% Domain-specific federated RL IDS references
+\bibitem{prifed_ids}
+S. Fu, H. Xu, A. Ali, and S. Sajid,
+``PriFed-IDS: A privacy-preserving federated reinforcement learning framework for secure and intelligent intrusion detection in digital health systems,''
+\textit{Electronics}, vol. 14, no. 23, Art. no. 4590, 2025.
+
+\bibitem{gru_fl}
+A. Kaur,
+``Intrusion detection approach for industrial internet of things traffic using deep recurrent reinforcement learning assisted federated learning,''
+IEEE article manuscript, 2024.
+
+\bibitem{sfedrl_ids}
+R. Benameur and A. Dahane,
+``Sfedrl-ids: secure federated deep reinforcement learning-based intrusion detection system for agricultural internet of things,''
+Springer journal article, 2025.
+
+\bibitem{fanet_rl}
+S. Benfriha, N. Labraoui, H. A. B. Salameh, and R. Bensaid,
+``Reinforcement learning-based drone-client selection for efficient federated learning-based intrusion detection in FANETs,''
+Springer journal article, 2025.
+
 % RL and AI Books
- bibitem{aima}
+\bibitem{aima}
 S. Russell and P. Norvig,
 \textit{Artificial Intelligence: A Modern Approach}, 3rd ed., Pearson, 2016.
 
- bibitem{deep_rl_hands_on}
+\bibitem{deep_rl_hands_on}
 M. Lapan,
 \textit{Deep Reinforcement Learning Hands-On}, Packt Publishing, 2020.
 
- bibitem{ml_basics}
+\bibitem{ml_basics}
 T. M. Mitchell,
 \textit{Machine Learning}, McGraw-Hill, 1997.
 
