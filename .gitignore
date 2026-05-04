@@ -1,18 +1,29 @@
-# Datasets (large CSV files - use Kaggle Datasets instead)
+# Datasets (upload separately to Kaggle)
 Dataset/
 
-# Results and plots (regenerated each run)
-results/
+# Outputs
+outputs/
+outputs_*/
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
-.ipynb_checkpoints/
+*.egg-info/
+.eggs/
+dist/
+build/
 
-# Environment
-.env
-.venv/
-venv/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.omc/
 
-.claude
+# OS
+Thumbs.db
+.DS_Store
+
+# Papers (optional, large PDFs)
+Papers/
