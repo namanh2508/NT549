@@ -901,6 +901,96 @@ PPO được chọn vì: (1) **stable training** — clip mechanism ngăn policy
 
 ## 12. Hướng Dẫn Demo & Deployment
 
+### 12.0 Tại Sao Cần ONNX Runtime + FastAPI + Uvicorn?
+
+Việc triển khai mô hình RL-based IDS lên mạng thật đòi hỏi nhiều hơn việc chỉ có file `.pt`. Dưới đây là phân tích chi tiết từng thành phần:
+
+#### ONNX Runtime — Tại sao không dùng PyTorch trực tiếp?
+
+| Tiêu chí | PyTorch (`.pt`) | ONNX Runtime |
+|---|---|---|
+| **Cross-platform** | Chỉ Python | Windows, Linux, ARM, Edge devices |
+| **Inference latency** | Cao (GIL, Python overhead) | Thấp hơn 2-5x (optimized kernels) |
+| **Memory footprint** | Lớn (full autograd engine) | Nhỏ (optimized for inference only) |
+| **Hardware acceleration** | CPU/GPU thông thường | TensorRT, OpenVINO, DirectML |
+| **Deployment ecosystem** | Không có sẵn | Docker, Kubernetes, IoT gateways |
+| **Production tooling** | Cần Flask/Django custom | Tích hợp sẵn với FastAPI |
+
+**Lợi ích cụ thể cho FedRL-IDS:**
+
+- **Latency thấp cho real-time IDS**: Một network flow cần được phân loại trong milliseconds. ONNX Runtime sử dụng optimized operator kernels (matrix multiplication, convolution) không qua PyTorch's autograd engine, giảm overhead đáng kể.
+- **Hỗ trợ edge devices**: IoT gateway (Raspberry Pi, NVIDIA Jetson, ARM-based devices) không chạy được PyTorch đầy đủ. ONNX Runtime có bản ARM-optimized.
+- **Quantization**: ONNX Runtime hỗ trợ INT8 quantization (giảm precision từ float32 xuống int8), giảm model size 4x và tăng throughput 2-3x mà chỉ mất 1-2\% accuracy.
+- **opset_version=17**: Bắt buộc cho GRU/Conv1D trong ONNX. Các phiên bản thấp hơn không export được đúng op cho PyTorch's dynamic control flow.
+- **Dynamic batching**: ONNX Runtime hỗ trợ dynamic axes (batch size thay đổi được), cho phép xử lý batch size từ 1 đến N flows cùng lúc mà không cần padding.
+
+**Quantization command** (sau khi export):
+```python
+from onnxruntime.quantization import quantize_dynamic
+quantize_dynamic("model.onnx", "model_int8.onnx", weight_type=QuantType.QUInt8)
+```
+
+#### FastAPI — Tại sao không dùng Flask/Gradio?
+
+| Tiêu chí | Flask | Gradio/Streamlit | FastAPI |
+|---|---|---|---|
+| **Async support** | ❌ (blocking) | ❌ | ✅ (native async) |
+| **Auto-docs (OpenAPI)** | ❌ | ❌ | ✅ (`/docs`, `/redoc`) |
+| **Type validation** | Manual | Partial | ✅ Pydantic auto |
+| **Concurrent requests** | Poor (sync) | Poor | ✅ (uvicorn async) |
+| **Streaming responses** | Manual | ✅ | ✅ native |
+| **Production-ready** | ❌ (dev server) | ❌ (demo only) | ✅ (production) |
+| **WebSocket support** | Manual | ✅ | ✅ native |
+
+**Lợi ích cụ thể cho FedRL-IDS:**
+
+- **Pydantic schemas**: Request/response được validate tự động. `NetworkFlow(features: list[float])` tự động reject payloads không đúng format, trả về HTTP 422 với thông báo lỗi chi tiết.
+- **Auto-generated API docs**: `/docs` (Swagger UI) và `/redoc` (ReDoc) cung cấp interactive API explorer — không cần viết documentation thủ công. Client có thể test endpoint trực tiếp từ browser.
+- **Batch prediction**: `POST /predict/batch` xử lý N flows trong một request. FastAPI async cho phép server xử lý batch này trong khi nhận requests khác, tối đa hóa throughput.
+- **JSON response**: Dễ dàng tích hợp với dashboards (Grafana, Kibana), SIEM systems (Splunk, Elastic), và alerting pipelines.
+- **Middleware ecosystem**: CORSMiddleware, RateLimitingMiddleware, CompressionMiddleware — plug-and-play mà không cần custom code.
+
+#### Uvicorn Worker — Tại sao cần nhiều workers?
+
+| Tiêu chí | Single worker | Multiple Uvicorn workers |
+|---|---|---|
+| **Concurrent requests** | 1 request tại một thời điểm | N requests song song |
+| **CPU utilization** | 1 core | Tất cả cores |
+| **ONNX session per worker** | 1 shared (race condition!) | Mỗi worker có riêng |
+| **Failure isolation** | Crash = server down | Crash = 1 worker restart |
+| **Throughput (req/s)** | ~50-100 | ~200-400 (4 workers) |
+
+**Lợi ích cụ thể cho FedRL-IDS:**
+
+- **ONNX Session per process**: Mỗi Uvicorn worker chạy trong OS process riêng. `onnxruntime.InferenceSession` được khởi tạo một lần khi worker start, không share giữa các workers (tránh race conditions). 4 workers = 4 ONNX sessions chạy song song trên 4 cores.
+- **Thread config**: `intra_op_num_threads=2` + `inter_op_num_threads=2` cho mỗi ONNX session. Tránh oversubscription khi OS có 4 workers × 4 threads = 16 threads tranh chấp 4 cores.
+- **Gunicorn + Uvicorn workers**: Production deployment dùng Gunicorn (process manager) với `UvicornWorker`. Gunicorn quản lý worker lifecycle (auto-restart on crash, zero-downtime reload).
+- **uvicorn reload**: Chế độ development tự reload khi code thay đổi — không cần restart thủ công.
+
+**Tổng hợp — Pipeline Deployment hoàn chỉnh:**
+
+```
+Real Network → Feature Extraction → Preprocessing → ONNX Runtime
+                (CICFlowMeter)     (scaler)       (CNNGRU inference)
+                                              ↓
+                                       FastAPI /predict
+                                              ↓
+                                   Uvicorn Workers (4x)
+                                              ↓
+                              JSON: {label, confidence, is_attack}
+                                              ↓
+                              Alert → SIEM / Dashboard / Webhook
+```
+
+**Performance benchmark kỳ vọng** (trên CPU, single flow):
+
+| Setup | Latency | Throughput |
+|---|---|---|
+| PyTorch `.pt` + Flask | ~15-25ms | ~40 req/s |
+| ONNX + FastAPI (1 worker) | ~3-8ms | ~120 req/s |
+| ONNX + FastAPI (4 workers) | ~3-8ms | ~400 req/s |
+| ONNX INT8 + FastAPI (4 workers) | ~1-3ms | ~800 req/s |
+
 ### 12.1 Tổng Quan Kiến Trúc Demo
 
 ```
