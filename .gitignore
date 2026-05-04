@@ -4,7 +4,8 @@ Dataset/
 # Outputs
 outputs/
 outputs_*/
-
+resuls/
+result/
 # Python
 __pycache__/
 *.pyc
@@ -20,6 +21,13 @@ build/
 *.swp
 *.swo
 .omc/
+.cursor/
+.grapuco/
+.claude/
+.venv
+venv/
+skills/
+ClAUDE.md
 
 # OS
 Thumbs.db
