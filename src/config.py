@@ -254,6 +254,8 @@ class FedTrustConfig:
 
 
 @dataclass
+class FedTrustAttentionConfig:
+    """FedTrust attention multiplier configuration.
 
     FIX (D): Replaced accuracy-based multiplier with loss-based multiplier.
 

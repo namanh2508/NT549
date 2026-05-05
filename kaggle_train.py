@@ -25,14 +25,14 @@ import shutil
 # ══════════════════════════════════════════════════════════════
 
 NUM_ROUNDS = 5                    # Total communication rounds (Kaggle-friendly)
-NUM_CLIENTS = 10                  # Number of federated clients (can be 4, 6, 8, ...)
+NUM_CLIENTS = 6                  # Number of federated clients (can be 4, 6, 8, ...)
 LOCAL_EPISODES = 5               # Local RL episodes per round per client
 SAMPLE_LIMIT = 50000              # Max samples per CSV file
 SEED = 42
 # Dataset names must match Config.dataset keys:
 #   "nsl_kdd", "edge_iiot", "unsw_nb15", "iomt_2024"
 # (internal: "iomt" maps to "iomt_2024" in Config, "edge" -> "edge_iiot", etc.)
-DATASETS_TO_TRAIN = ["edge_iiot"]  # TEST: start with 1 dataset only, 5 rounds
+DATASETS_TO_TRAIN = ["edge_iiot"]
 
 # ══════════════════════════════════════════════════════════════
 #  STEP 1: Setup code & data
