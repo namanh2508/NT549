@@ -1,19 +1,14 @@
 """
 IDS Environment for Reinforcement Learning.
 
-The agent observes network traffic features and outputs a continuous
-action (detection confidence).  The environment computes rewards using:
-
-    R(t) = α·TP − β·FP − γ·FN + δ·(1 − normalised_latency)
-
-Supports per-attack-type decision thresholds.
-autoencoder reconstruction error (Chalapathy & Chawla, 2019).
+The environment observes network traffic features and outputs class predictions.
+The reward is composite: R(t) = TP·TN rewards − FP·FN penalties + MCC bonus.
 """
 
 import time
 import numpy as np
 import torch
-from typing import Dict, Optional, Tuple, Set
+from typing import Dict, Optional, Tuple
 
 from src.config import RewardConfig
 
@@ -239,7 +234,7 @@ class MultiClassIDSEnvironment(IDSEnvironment):
         )
         self._sum_inv_freqs = inv_freqs.sum()
 
-        # Per-episode predicted class distribution (for HHI bias penalty)
+        # Per-episode predicted class distribution (for collapse detection)
         self._episode_pred_counts: Dict[int, int] = {c: 0 for c in range(num_classes)}
         self._episode_total_preds: int = 0
 
@@ -355,46 +350,6 @@ class MultiClassIDSEnvironment(IDSEnvironment):
                     self._collapse_detected = False
 
         return reward
-
-    def get_episode_hhi(self) -> float:
-        """
-        Compute Herfindahl-Hirschman Index of predicted class distribution.
-        Returns 1.0 when all predictions are one class (max collapse),
-        returns ~1/num_classes when perfectly uniform.
-        """
-        if self._episode_total_preds == 0:
-            return 1.0 / self.num_classes
-        probs = np.array([
-            self._episode_pred_counts[c] / self._episode_total_preds
-            for c in range(self.num_classes)
-        ])
-        return float(np.sum(probs ** 2))
-
-    def get_hhi_penalty(self) -> float:
-        """
-        Compute per-episode HHI bias penalty.
-        hhi = sum((pred_count/total)^2) over classes
-        hhi ranges from 1/num_classes (uniform) to 1.0 (single class).
-        Penalty = HHI_PENALTY_COEF * (hhi - 1/num_classes) / (1 - 1/num_classes)
-        Returns 0 when predictions are perfectly uniform, positive when collapsed.
-        """
-        hhi = self.get_episode_hhi()
-        min_hhi = 1.0 / self.num_classes
-        max_hhi = 1.0
-        if max_hhi == min_hhi:
-            normalized_hhi = 0.0
-        else:
-            normalized_hhi = (hhi - min_hhi) / (max_hhi - min_hhi)
-        return self.HHI_PENALTY_COEF * normalized_hhi
-
-    def get_class_distribution(self) -> Dict[int, float]:
-        """Return per-class prediction distribution as a fraction of total predictions."""
-        if self._episode_total_preds == 0:
-            return {c: 0.0 for c in range(self.num_classes)}
-        return {
-            c: self._episode_pred_counts[c] / self._episode_total_preds
-            for c in range(self.num_classes)
-        }
 
     def step(self, action) -> Tuple[np.ndarray, float, bool, Dict]:
         """

@@ -138,8 +138,8 @@ def load_checkpoint(filepath: str) -> Dict:
 def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
     """Main federated RL training loop.
 
-    Architecture: CNN-GRU-CBAM + PPO (Tier-1) + RL Selector (Tier-3) + FLTrust.
-    Removed: Meta-Agent, Novelty Detector, Dynamic Attention.
+    Architecture: CNN-GRU-CBAM + PPO (Tier-1) + RL Selector (Tier-2) + FLTrust.
+    Removed: Meta-Agent, Novelty Detector, Dynamic Attention, Fed+.
     """
     print("=" * 70)
     print("  FedRL-IDS: PPO + FLTrust + RL Client Selector (Resource Efficiency)")
@@ -153,7 +153,6 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
     torch.manual_seed(cfg.training.seed)
     np.random.seed(cfg.training.seed)
 
-    os.makedirs(cfg.training.output_dir, exist_ok=True)
     # Append dataset name to output_dir so results are stored per-dataset
     cfg.training.output_dir = os.path.join(cfg.training.output_dir, f"outputs_{cfg.training.dataset}")
     os.makedirs(cfg.training.output_dir, exist_ok=True)
@@ -225,7 +224,7 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
     # Federated aggregator
     aggregator = FederatedAggregator(cfg, device)
 
-    # RL-based Client Selector (Tier 3)
+    # RL-based Client Selector (Tier 2)
     client_selector = None
     if cfg.training.client_selection_enabled:
         client_selector = RLClientSelector(
@@ -343,7 +342,7 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
     for round_idx in range(start_round, cfg.training.num_rounds):
         round_start = time.time()
 
-        # ── Step 0: RL Client Selection (Tier 3) ──────────────────────────────
+        # ── Step 0: RL Client Selection (Tier 2) ──────────────────────────────
         if client_selector is not None:
             reputations = aggregator.fl_trust.reputations[:cfg.training.num_clients]
 
@@ -418,19 +417,30 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
         # Compute gradient alignments for ALL clients (for selector state)
         # g_k = cos(Δ_k, Δ_glob): measures alignment with global gradient direction
         # For unselected clients: 0.0 (neutral alignment)
-        all_gradient_alignments = []
-        # Build post/pre model dicts for selected clients
-        selected_posts = {i: client.get_model_state() for i, client in zip(selected_indices, selected_clients)}
-        selected_pres = {i: pre for i, pre in zip(selected_indices, pre_train_models)}
-        # Server delta — only compute alignment if server model actually changed
         server_delta = aggregator.compute_update(server_state, aggregator.global_model)
-        if server_delta and len(server_delta) > 0:  # empty OrderedDict is falsy; check keys explicitly
+        if server_delta and len(server_delta) > 0:
+            # Build local updates for selected clients: Δ_k = post - pre
+            selected_posts = {
+                i: client.get_model_state()
+                for i, client in zip(selected_indices, selected_clients)
+            }
+            selected_pres = {
+                i: pre for i, pre in zip(selected_indices, pre_train_models)
+            }
+            selected_updates = [
+                aggregator.compute_update(selected_posts[i], selected_pres[i])
+                for i in selected_indices
+            ]
             raw_alignments = compute_gradient_alignment(
-                local_updates=all_gradient_alignments,
+                local_updates=selected_updates,
                 global_update=server_delta,
                 device=device,
             )
-            all_gradient_alignments = list(raw_alignments)  # [K] floats, aligned with 0..K-1 order
+            # Map back to all K clients: selected get alignment, unselected get 0.0
+            alignment_map = dict(zip(selected_indices, raw_alignments))
+            all_gradient_alignments = [
+                alignment_map.get(k, 0.0) for k in range(cfg.training.num_clients)
+            ]
         else:
             # Server model unchanged (e.g., cold start) — use uniform alignments
             all_gradient_alignments = [0.0] * cfg.training.num_clients
@@ -480,7 +490,8 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
 
         # ── Selector PPO update (Tier 2) ───────────────────────────────
         if (client_selector is not None
-                and (round_idx + 1) % cfg.training.selector_eval_interval == 0):
+                and round_idx >= cfg.training.selector_eval_interval - 1
+                and (round_idx - cfg.training.selector_eval_interval + 1) % cfg.training.selector_eval_interval == 0):
 
             # Selector reward uses FLTrust temporal reputations (K-length list).
             # NOTE: trust_scores from aggregate_round is SELECTED-only (length = len(selected_clients)).
@@ -534,15 +545,6 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
 
             # Get temporal reputations for logging
             reputations = aggregator.fl_trust.reputations[:cfg.training.num_clients]
-
-            # Curriculum K_sel for logging
-            k_init = cfg.training.clients_per_round
-            k_min = max(3, k_init // 2)
-            k_sel_this_round = RLClientSelector.k_sel_schedule(
-                round_idx, k_init=k_init, k_min=k_min,
-                total_rounds=cfg.training.num_rounds,
-                num_clients=cfg.training.num_clients,
-            )
 
             f1_macro_val = eval_metrics.get("f1_macro", 0.0)
             recall_per_class = eval_metrics.get("recall_per_class", {})

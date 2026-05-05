@@ -1,6 +1,6 @@
 """
 Configuration for Federated RL-based IDS.
-Combines PPO + Multi-Agent RL + FedTrust + Fed+ + Dynamic Attention.
+Combines PPO + FLTrust (Byzantine-robust) + RL Client Selector (Resource Efficiency).
 """
 import os
 from dataclasses import dataclass, field
@@ -179,7 +179,6 @@ class RewardConfig:
     beta: float = 0.8      # FP penalty (binary env)
     gamma: float = 0.8     # FN penalty (binary env)
     delta: float = 0.3     # latency bonus
-    epsilon: float = 0.0   # unused — novelty bonus removed (autoencoder removed)
 
     # Multi-class reward parameters (MultiClassIDSEnvironment)
     tp_reward: float = 3.0          # reward for correct attack detection
@@ -302,9 +301,11 @@ class TrainingConfig:
     client_selection_enabled: bool = True
     clients_per_round: int = 8          # K_sel: number of clients selected per round
     selector_hidden_dim: int = 128
-    selector_eval_interval: int = 1    # update selector every N rounds
+    selector_eval_interval: int = 5    # update selector every N rounds
 
-    # Multi-seed sweep
+
+@dataclass
+class Config:
     seeds: List[int] = field(default_factory=lambda: [42, 123, 777])
 
 

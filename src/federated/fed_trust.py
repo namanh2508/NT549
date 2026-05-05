@@ -122,9 +122,6 @@ class FLTrust:
         seen in the original implementation.
         """
         for i, cs in enumerate(cosine_scores):
-            if i >= len(self.reputations):
-                self.reputations.append(0.5)
-
             delta = cs - self.COSINE_POSITIVE_THRESHOLD  # positive = good, negative = bad
 
             if delta > 0:
@@ -200,7 +197,7 @@ class FLTrust:
                 trust = max(trust, self.trust_floor)
             raw_scores.append(trust)
 
-        # Step 5: Normalise trust scores to sum to 1.0
+        # Step 4: Normalise trust scores to sum to 1.0
         total_raw = sum(raw_scores)
         if total_raw > 1e-12:
             scores = [s / total_raw for s in raw_scores]
@@ -208,7 +205,7 @@ class FLTrust:
             n = len(raw_scores)
             scores = [1.0 / n] * n
 
-        # Step 6: Anti-concentration cap — apply AFTER normalisation to truly enforce 50% max
+        # Step 5: Anti-concentration cap — apply AFTER normalisation to truly enforce 50% max
         # Applying before normalisation distorts relative weights; applying after preserves distribution
         max_trust = 0.5  # no single client gets more than 50% of total trust
         excess = sum(max(0.0, s - max_trust) for s in scores)

@@ -1,7 +1,7 @@
 """
-RL-Based Resource-Efficient Client Selection for FedRL-IDS.
+RL-Based Client Selection for FedRL-IDS.
 
-This module replaces the original Tier-3 client selector. After architectural
+This module replaces the original Tier-2 client selector. After architectural
 review, the previous design suffered from two critical flaws:
 
   [A] Authority overlap: The Selector tried to "filter bad clients" — the same
@@ -68,6 +68,72 @@ def entropy(probs: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     """Shannon entropy H(P) = −Σ p · log(p)."""
     p = probs.clamp(min=eps, max=1 - eps)
     return -(p * torch.log(p)).sum(dim=-1)
+
+
+def compute_model_divergence(client_state: OrderedDict, global_model: OrderedDict) -> float:
+    """
+    Compute relative model divergence: ||w_client - w_global|| / ||w_global||.
+
+    Measures how different a client's model is from the global model.
+    Higher divergence may indicate:
+    - Client-specific learning
+    - Data distribution shift
+    - Potential attack (malicious updates)
+
+    Args:
+        client_state: OrderedDict of client's model parameters
+        global_model: OrderedDict of global model's parameters
+
+    Returns:
+        Relative L2 divergence (float), or 0.0 if global model is zero/near-zero
+    """
+    w_client = flatten_state_dict(client_state)
+    w_global = flatten_state_dict(global_model)
+
+    norm_global = torch.norm(w_global).item()
+    if norm_global < 1e-12:
+        return 0.0
+
+    diff = w_client - w_global
+    divergence = torch.norm(diff).item() / norm_global
+    return float(divergence)
+
+
+def compute_gradient_alignment(
+    local_updates: List[OrderedDict],
+    global_update: OrderedDict,
+    device: torch.device,
+) -> List[float]:
+    """
+    Compute cosine alignment between local gradient updates and global update direction.
+
+    Args:
+        local_updates: List of local update OrderedDicts (already computed as post - pre)
+        global_update: Server/global update direction
+        device: torch device
+
+    Returns:
+        List of cosine similarities (floats in [-1, 1]) for each local update
+    """
+    g_global = flatten_state_dict(global_update).to(device)
+    norm_global = torch.norm(g_global).item()
+
+    if norm_global < 1e-12 or len(local_updates) == 0:
+        return [0.0] * len(local_updates)
+
+    alignments = []
+    for local_update in local_updates:
+        g_local = flatten_state_dict(local_update).to(device)
+        dot = torch.dot(g_local, g_global).item()
+        norm_local = torch.norm(g_local).item()
+
+        if norm_local < 1e-12:
+            alignments.append(0.0)
+        else:
+            cosine = dot / (norm_local * norm_global)
+            alignments.append(float(cosine))
+
+    return alignments
 
 
 # ─── Rollout Buffer ────────────────────────────────────────────────────────────

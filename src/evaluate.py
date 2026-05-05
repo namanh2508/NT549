@@ -44,6 +44,7 @@ def evaluate_model(
         action_dim=num_classes,
         cfg=cfg.ppo,
         device=device,
+        dataset=cfg.training.dataset,
     )
     eval_agent.set_model_state(model_state)
 

@@ -25,7 +25,6 @@ References:
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 from collections import OrderedDict
@@ -307,11 +306,3 @@ class PPOAgent:
                 critic_state[k[7:]] = v
         self.actor.load_state_dict(actor_state)
         self.critic.load_state_dict(critic_state)
-
-    def get_actor_state(self) -> OrderedDict:
-        return OrderedDict(
-            (k, v.clone()) for k, v in self.actor.state_dict().items()
-        )
-
-    def set_actor_state(self, state: OrderedDict):
-        self.actor.load_state_dict(state)

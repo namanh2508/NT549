@@ -196,49 +196,6 @@ def balance_dataset(
     return X_resampled, y_resampled
 
 
-def remove_noise_dbscan(
-    X: np.ndarray,
-    y: np.ndarray,
-    eps: float = 0.5,
-    min_samples: int = 5,
-    random_state: int = 42,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Optional noise removal using DBSCAN clustering.
-    Points labeled -1 (noise) are removed.
-
-    DBSCAN finds clusters of arbitrary shape and identifies outliers as noise.
-    This complements RENN for removing different types of noise.
-
-    Args:
-        X: feature matrix [N, features]
-        y: labels [N]
-        eps: DBSCAN epsilon (neighborhood radius)
-        min_samples: DBSCAN min samples for core points
-        random_state: seed (DBSCAN is deterministic, but kept for API consistency)
-
-    Returns:
-        X_clean, y_clean (noise points removed)
-    """
-    try:
-        from sklearn.cluster import DBSCAN
-    except ImportError:
-        warnings.warn("sklearn DBSCAN not available, skipping noise removal")
-        return X, y
-
-    n_before = len(X)
-    db = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        labels = db.fit_predict(X)
-
-    mask = labels != -1  # -1 = noise label in DBSCAN
-    n_removed = n_before - mask.sum()
-    if n_removed > 0:
-        print(f"  [DBSCAN] Removed {n_removed} noise points ({100*n_removed/n_before:.1f}%)")
-    return X[mask], y[mask]
-
-
 def select_features(
     X: np.ndarray,
     y: np.ndarray,
@@ -848,16 +805,6 @@ def load_edge_iiot_dataset(cfg: Config, use_universal: bool = False) -> Tuple[pd
 # ─────────────────────────────────────────
 #  Federated partitioning
 # ─────────────────────────────────────────
-
-def partition_data_iid(
-    X: np.ndarray, y: np.ndarray, num_clients: int, seed: int = 42
-) -> List[Tuple[np.ndarray, np.ndarray]]:
-    """Randomly partition data into num_clients equal parts (IID)."""
-    rng = np.random.RandomState(seed)
-    indices = rng.permutation(len(X))
-    splits = np.array_split(indices, num_clients)
-    return [(X[s], y[s]) for s in splits]
-
 
 def partition_data_non_iid(
     X: np.ndarray, y: np.ndarray, num_clients: int,
