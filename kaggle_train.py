@@ -411,9 +411,7 @@ for dataset_name in DATASETS_TO_TRAIN:
     cfg.training.seed = SEED
     cfg.training.sample_limit_per_file = SAMPLE_LIMIT
     cfg.training.output_dir = output_dir
-    cfg.training.meta_agent_enabled = False          # Disabled: causes overfitting (Bug 4)
-    cfg.training.novelty_retrain_interval = 0        # Disable novelty retraining for speed
-    cfg.training.client_selection_enabled = True     # Enable RL client selector
+    cfg.training.client_selection_enabled = True     # RL Client Selector (Tier-2)
 
     # ── Train ──
     try:
