@@ -4,9 +4,9 @@ IDS Environment for Reinforcement Learning.
 The agent observes network traffic features and outputs a continuous
 action (detection confidence).  The environment computes rewards using:
 
-    R(t) = α·TP − β·FP − γ·FN + δ·(1 − normalised_latency) + ε·novelty_bonus
+    R(t) = α·TP − β·FP − γ·FN + δ·(1 − normalised_latency)
 
-Supports per-attack-type decision thresholds and novelty detection via
+Supports per-attack-type decision thresholds.
 autoencoder reconstruction error (Chalapathy & Chawla, 2019).
 """
 
@@ -39,8 +39,6 @@ class IDSEnvironment:
         num_classes: int,
         shuffle: bool = True,
         seed: int = 42,
-        novelty_detector=None,
-        novelty_threshold: float = 0.65,
     ):
         self.X = X
         self.y = y
@@ -51,12 +49,6 @@ class IDSEnvironment:
 
         self.state_dim = X.shape[1]
         self.action_dim = 1  # single continuous confidence score
-
-        # Track novelty: classes seen across ALL episodes (persistent)
-        self._seen_classes: Set[int] = set()
-        # Autoencoder-based novelty detector (set externally after training)
-        self._novelty_detector = novelty_detector
-        self._novelty_threshold = novelty_threshold
 
         # Episode bookkeeping
         self._idx = 0
@@ -73,7 +65,7 @@ class IDSEnvironment:
     # ─── Gym-like API ──────────────────────
 
     def reset(self) -> np.ndarray:
-        """Reset environment for a new episode. _seen_classes persists across episodes."""
+        """Reset environment for a new episode."""
         if self.shuffle:
             self.rng.shuffle(self._order)
         self._idx = 0
@@ -127,29 +119,13 @@ class IDSEnvironment:
         self._max_latency = max(self._max_latency, latency + 1e-9)
         norm_latency = min(latency / self._max_latency, 1.0)
 
-        # Novelty bonus: autoencoder reconstruction error OR unseen class
-        novelty_bonus = 0.0
-        if is_attack == 1 and predicted_attack == 1:
-            if true_label not in self._seen_classes:
-                # Class never seen in any episode — potentially novel attack
-                novelty_bonus = 1.0
-                self._seen_classes.add(true_label)
-            elif self._novelty_detector is not None:
-                # Use autoencoder reconstruction error for anomaly scoring
-                state_t = torch.FloatTensor(self.X[self._order[self._idx]]).unsqueeze(0)
-                with torch.no_grad():
-                    recon_err = self._novelty_detector.reconstruction_error(state_t).item()
-                if recon_err > self._novelty_threshold:
-                    novelty_bonus = min(recon_err / self._novelty_threshold - 1.0, 1.0)
-
-        # Composite reward
+        # Composite reward (no novelty bonus — autoencoder removed)
         r = self.reward_cfg
         reward = (
             r.alpha * tp
             - r.beta * fp
             - r.gamma * fn
             + r.delta * (1.0 - norm_latency)
-            + r.epsilon * novelty_bonus
         )
 
         # Advance
@@ -164,7 +140,6 @@ class IDSEnvironment:
             "predicted_attack": predicted_attack,
             "is_attack": is_attack,
             "tp": tp, "fp": fp, "fn": fn,
-            "novelty": novelty_bonus,
             "latency": latency,
             "episode_metrics": self._episode_metrics.copy(),
         }
@@ -174,15 +149,6 @@ class IDSEnvironment:
     def _get_state(self) -> np.ndarray:
         idx = self._order[self._idx % len(self._order)]
         return self.X[idx].astype(np.float32)
-
-    def reset_novelty_tracking(self):
-        """Reset novelty tracking at the start of each FL round.
-
-        BUG-C fix: _seen_classes persists across ALL episodes/rounds, so after
-        FL round 1 all attack classes are "seen" and novelty_bonus=0 forever.
-        Calling this at the start of each FL round re-enables novelty detection.
-        """
-        self._seen_classes.clear()
 
     @property
     def episode_metrics(self) -> Dict[str, int]:
@@ -322,7 +288,6 @@ class MultiClassIDSEnvironment(IDSEnvironment):
         true_label: int,
         predicted_class: int,
         norm_latency: float,
-        novelty_bonus: float,
         class_bonus: float,
         tn: int = 0,
     ) -> float:
@@ -339,9 +304,8 @@ class MultiClassIDSEnvironment(IDSEnvironment):
         2. Cost-sensitive weighting — FN penalty > FP penalty because
            missing an attack is more dangerous than a false alarm.
         3. Collapse penalty — kept as safety net against single-class collapse.
-        4. Novelty bonus — kept for zero-day attack detection.
-        5. Removed: HHI penalty, entropy bonus, balanced accuracy bonus,
-           macro F1 bonus (all redundant with MCC).
+        4. Removed: novelty bonus (autoencoder), HHI penalty, entropy bonus,
+           balanced accuracy bonus, macro F1 bonus (all redundant with MCC).
         """
         w = self._class_weights[true_label]
 
@@ -374,9 +338,8 @@ class MultiClassIDSEnvironment(IDSEnvironment):
         # 3. Correct class identification bonus
         reward = step_reward + mcc_bonus + class_bonus
 
-        # 4. Latency + novelty (preserved from original design)
+        # 4. Latency (no novelty — autoencoder removed)
         reward += self.reward_cfg.delta * (1.0 - norm_latency)
-        reward += self.reward_cfg.epsilon * novelty_bonus
 
         # 5. Collapse detection penalty — safety net (kept, every 20 steps)
         self._collapse_countdown -= 1
@@ -485,30 +448,16 @@ class MultiClassIDSEnvironment(IDSEnvironment):
         self._max_latency = max(self._max_latency, latency + 1e-9)
         norm_latency = min(latency / self._max_latency, 1.0)
 
-        # Novelty: autoencoder reconstruction error OR unseen class
-        novelty_bonus = 0.0
-        if is_attack == 1 and predicted_attack == 1:
-            if true_label not in self._seen_classes:
-                novelty_bonus = 1.0
-                self._seen_classes.add(true_label)
-            elif self._novelty_detector is not None:
-                state_t = torch.FloatTensor(self.X[self._order[self._idx]]).unsqueeze(0)
-                with torch.no_grad():
-                    recon_err = self._novelty_detector.reconstruction_error(state_t).item()
-                if recon_err > self._novelty_threshold:
-                    novelty_bonus = min(recon_err / self._novelty_threshold - 1.0, 1.0)
-
         # Track predicted class distribution for entropy bonus and HHI penalty
         self._episode_pred_counts[predicted_class] += 1
         self._episode_total_preds += 1
 
-        # Class-balanced composite reward
+        # Class-balanced composite reward (no novelty bonus — autoencoder removed)
         reward = self._compute_class_balanced_reward(
             tp=tp, fp=fp, fn=fn,
             true_label=true_label,
             predicted_class=predicted_class,
             norm_latency=norm_latency,
-            novelty_bonus=novelty_bonus,
             class_bonus=class_bonus,
             tn=tn,
         )
@@ -524,7 +473,6 @@ class MultiClassIDSEnvironment(IDSEnvironment):
             "predicted_attack": predicted_attack,
             "is_attack": is_attack,
             "tp": tp, "fp": fp, "fn": fn, "tn": tn,
-            "novelty": novelty_bonus,
             "latency": latency,
             "class_metrics": {k: v.copy() for k, v in self._class_metrics.items()},
             "episode_metrics": self._episode_metrics.copy(),

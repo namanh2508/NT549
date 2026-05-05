@@ -1,10 +1,8 @@
 """
-Neural network architectures for PPO actor-critic, meta-agent, and novelty detection.
+Neural network architectures for PPO actor-critic.
 
 References:
     Schulman et al., "Proximal Policy Optimization Algorithms", arXiv 2017.
-    Chalapathy & Chawla, "Deep Learning for Anomaly Detection: A Survey",
-        arXiv 2019.
 """
 
 import torch
@@ -41,39 +39,6 @@ class CriticNetwork(nn.Module):
         return self.net(state).squeeze(-1)
 
 
-class NoveltyDetector(nn.Module):
-    """
-    Autoencoder-based novelty detector (Chalapathy & Chawla, 2019).
-    Learns to reconstruct known-class traffic features.
-    Samples with high reconstruction error are flagged as novel/unseen.
-    """
-
-    def __init__(self, input_dim: int, latent_dim: int = 32):
-        super().__init__()
-        hidden = max(64, input_dim // 2)
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, latent_dim),
-            nn.ReLU(),
-        )
-        self.decoder = nn.Sequential(
-            nn.Linear(latent_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, input_dim),
-        )
-        self.encoder.apply(lambda m: init_weights(m))
-        self.decoder.apply(lambda m: init_weights(m))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        z = self.encoder(x)
-        return self.decoder(z)
-
-    def reconstruction_error(self, x: torch.Tensor) -> torch.Tensor:
-        """Per-sample MSE reconstruction error."""
-        x_hat = self.forward(x)
-        return ((x - x_hat) ** 2).mean(dim=-1)
-
 
 # ─── CNN-GRU Hybrid Actor (Tier-1) ─────────────────────────────────────────────
 
@@ -81,46 +46,16 @@ class CNNGRUActor(nn.Module):
     """
     CNN-GRU hybrid for UNSW-NB15: Conv1D feature extraction + GRU temporal learning.
 
-    FIXED architecture (correct Conv1D over temporal dimension):
-    ┌──────────────────────────────────────────────────────────────────────────┐
-    │  Paper (CNN-GRU, Cao et al.):                                          │
-    │    Conv2D on 2D image (features → 2D grid) → spatial features        │
-    │    Then GRU over temporal dimension                                      │
-    │                                                                            │
-    │  Our system (CNNGRUActor):                                             │
-    │    Conv1D over SEQUENCE dimension (temporal) — learns cross-timestep    │
-    │    patterns per feature channel                                          │
-    │    Then GRU for full temporal sequence                                   │
-    │                                                                            │
-    │  Why Conv1D over time?                                                  │
-    │    - Each feature channel = one network flow attribute over time       │
-    │    - Conv1D(k=3) captures 3-timestep patterns per feature             │
-    │    - Conv1D(k=5) captures 5-timestep patterns                         │
-    │    - Multi-scale = short-range AND medium-range temporal patterns       │
-    │    - GRU then learns which temporal patterns are discriminative          │
-    └──────────────────────────────────────────────────────────────────────────┘
-
     Architecture:
       Input: [batch, seq_len, feature_dim]
-      ↓ permute(0, 2, 1)
-      [batch, feature_dim, seq_len]  ← Conv1D expects (channels, length)
-      ↓ Conv1D(kernel=3, out=32, stride=1) → ReLU
-      [batch, 32, seq_len-2]
-      ↓ Conv1D(kernel=5, out=64, stride=1) → ReLU
-      [batch, 64, seq_len-4]
-      ↓ permute(0, 2, 1)
-      [batch, seq_len-4, 64]  ← GRU expects (batch, seq, features)
-      ↓ GRU(hidden=128, layers=2, batch_first=True)
-      [batch, seq_len-4, 128]
-      ↓ Mean pooling over temporal dimension
-      [batch, 128]
-      ↓ Linear → logits
-      [batch, action_dim]
+      -> permute(0, 2, 1) -> Conv1D over temporal dimension
+      -> Multi-scale Conv1D (k=3, k=5)
+      -> CBAM attention (channel + spatial)
+      -> GRU temporal learning
+      -> Mean pooling -> class logits
 
-    Input:  [batch, seq_len=5, feature_dim=40]  ← UNSW after feature selection
-    After Conv1D: extracts multi-scale temporal patterns per feature channel
-    After GRU: temporal learning across the sequence
-    Output: class logits
+    Input:  [batch, seq_len, feature_dim]  (supports 2D [batch, features] as fallback)
+    Output: class logits [batch, action_dim]
     """
 
     def __init__(
@@ -143,7 +78,7 @@ class CNNGRUActor(nn.Module):
         if cnn_channels is None:
             cnn_channels = [32, 64]
 
-        # ── FIXED: Conv1D over temporal dimension (seq_len) ──────────────────
+        # ── Conv1D over temporal dimension (seq_len) ─────────────────────────
         # Input: [batch, seq_len, feature_dim]
         # Conv1D: treat feature_dim as channels, seq_len as length
         # Conv1d(in_channels=feature_dim, out_channels=32, kernel_size=3)
@@ -373,6 +308,7 @@ DATASET_DEFAULTS = {
     "iomt_2024":   {"backbone": "cnn_gru", "seq_len": 10, "hidden_dim": 128},
     "edge_iiot":   {"backbone": "cnn_gru", "seq_len": 8,  "hidden_dim": 128},
     "unsw_nb15":   {"backbone": "cnn_gru", "seq_len": 5,  "hidden_dim": 128},
+    "unified":     {"backbone": "cnn_gru", "seq_len": 8,  "hidden_dim": 128},
 }
 
 
@@ -398,6 +334,8 @@ def build_actor(
         dataset_key = "nsl_kdd"
     elif dataset_key.startswith("unsw"):
         dataset_key = "unsw_nb15"
+    elif dataset_key == "unified":
+        pass  # already "unified"
 
     cfg = DATASET_DEFAULTS.get(dataset_key, DATASET_DEFAULTS["edge_iiot"])
 

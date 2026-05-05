@@ -23,6 +23,7 @@ from src.config import (
     DATASET_DIR, NSL_KDD_COLUMNS, NSL_KDD_CATEGORICAL,
     NSL_KDD_ATTACK_MAP, IOMT_ATTACK_MAP, IOMT_DROP_COLS,
     EDGE_IIOT_ATTACK_MAP, EDGE_IIOT_DROP_COLS,
+    UNIVERSAL_ATTACK_MAPS, UNIVERSAL_TAXONOMY, UNIVERSAL_CLASS_NAMES,
     Config,
 )
 
@@ -251,7 +252,7 @@ def select_features(
     Feature selection following the CNN-GRU paper methodology:
     RandomForest (strong) + Pearson correlation filtering.
 
-    CRITICAL FIX: Feature selection is now trained on BALANCED data (if available).
+    CRITICAL: Feature selection is trained on BALANCED data (if available).
     This prevents bias toward majority-class features, ensuring minority attack
     patterns are properly represented in the selected feature set.
 
@@ -426,36 +427,104 @@ def _deduplicate_dataframe(df: pd.DataFrame, subset_cols: List[str] = None, logg
 
 
 # ─────────────────────────────────────────
+#  Universal Taxonomy Mapper
+# ─────────────────────────────────────────
+
+def map_to_universal_taxonomy(
+    df: pd.DataFrame,
+    attack_col: str,
+    dataset_name: str,
+) -> pd.DataFrame:
+    """
+    Map original attack categories to 3-class universal taxonomy:
+    - Benign: normal/benign traffic
+    - Attack: DoS, DDoS, malware, injection, brute-force, etc.
+    - Recon: reconnaissance (port scan, vulnerability scan, OS fingerprinting)
+
+    This enables a single model to detect attacks across all datasets.
+
+    Args:
+        df: DataFrame with attack_col
+        attack_col: column name containing original attack labels
+        dataset_name: one of 'edge_iiot', 'nsl_kdd', 'iomt_2024', 'unsw_nb15'
+    Returns:
+        DataFrame with 'attack_category' column (universal taxonomy)
+    """
+    if dataset_name not in UNIVERSAL_ATTACK_MAPS:
+        raise ValueError(f"Unknown dataset: {dataset_name}. "
+                        f"Available: {list(UNIVERSAL_ATTACK_MAPS.keys())}")
+
+    attack_map = UNIVERSAL_ATTACK_MAPS[dataset_name]
+
+    # NSL-KDD uses lowercase 'label' column
+    if attack_col in df.columns:
+        if dataset_name == "nsl_kdd":
+            df["attack_category"] = df[attack_col].apply(
+                lambda x: attack_map.get(str(x).strip().lower(), "Unknown")
+            )
+        else:
+            df["attack_category"] = df[attack_col].apply(
+                lambda x: attack_map.get(str(x).strip(), "Unknown")
+            )
+    else:
+        raise ValueError(f"Column '{attack_col}' not found in DataFrame")
+
+    return df
+
+
+def apply_universal_label_encoding(
+    y: np.ndarray,
+    classes: np.ndarray,
+) -> Tuple[np.ndarray, List[str]]:
+    """
+    Re-encode labels to universal taxonomy indices.
+    Maps (Benign→0, Attack→1, Recon→2).
+
+    Returns:
+        (re-encoded labels, canonical class names)
+    """
+    universal_names = UNIVERSAL_CLASS_NAMES  # ["Benign", "Attack", "Recon"]
+    mapping = UNIVERSAL_TAXONOMY  # {"Benign": 0, "Attack": 1, "Recon": 2}
+
+    new_y = np.zeros(len(y), dtype=np.int64)
+    for i, cls in enumerate(classes):
+        if cls in mapping:
+            new_y[i] = mapping[cls]
+        else:
+            # Fallback: unknown → Attack
+            new_y[i] = mapping["Attack"]
+
+    return new_y, universal_names
+
+
+# ─────────────────────────────────────────
 #  UNSW-NB15 Dataset (with SMOTE + Feature Selection)
 # ─────────────────────────────────────────
 
-def load_unsw_nb15_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, LabelEncoder]:
+def load_unsw_nb15_dataset(cfg: Config, use_universal: bool = False) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, LabelEncoder]:
     """
     Load UNSW-NB15 with proper balancing and feature selection.
 
-    FIXED pipeline (CNN-GRU paper methodology):
-    ┌─────────────────────────────────────────────────────────────────────┐
-    │  1. Load train + test CSVs                                          │
-    │  2. Concatenate + deduplicate (remove duplicate flows)               │
-    │  3. Encode categoricals + clean                                      │
-    │  4. Normalize (MinMaxScaler)                                         │
-    │  5. Train/test split FIRST (avoid leakage)                          │
-    │  6. ON TRAINING DATA ONLY:                                           │
-    │     a. ADASYN → RENN (balance + noise removal)                      │
-    │     b. RF(200,depth=15) on BALANCED data → feature selection         │
-    │  7. Apply feature selection to test data (transform only)            │
-    │  8. Return balanced train, original-imbalanced test                 │
-    └─────────────────────────────────────────────────────────────────────┘
+    Pipeline:
+      1. Load train + test CSVs and concatenate
+      2. Deduplicate (remove duplicate flows)
+      3. Encode categoricals + clean
+      4. Normalize (MinMaxScaler)
+      5. Train/test split FIRST (avoid leakage)
+      6. ON TRAINING DATA ONLY: ADASYN + RENN (balance + noise removal)
+      7. RF(200, depth=15) on BALANCED data for feature selection
+      8. Apply feature selection to test data (transform only)
+      9. Return balanced train, original-imbalanced test
 
     WHY this order matters:
-    - Feature selection must see labels → trained on training set only
+    - Feature selection must see labels -> trained on training set only
     - Balancing must happen AFTER feature selection (SMOTE needs meaningful neighbors)
     - Test set stays IMBALANCED for fair evaluation (realistic)
     - RL agents see balanced data during training (good minority learning)
 
-    The previous code had TWO critical bugs:
-    1. SMOTE was disabled → no class imbalance handling (CAUSED UNSW FAILURE)
-    2. Feature selection + balancing were done on FULL data before split → leakage
+    Args:
+        cfg: Config object
+        use_universal: if True, map to 3-class universal taxonomy
     """
     unsw_dir = os.path.join(DATASET_DIR, "UNSW-NB15")
     train_path = os.path.join(unsw_dir, "UNSW_NB15_training-set.csv")
@@ -468,10 +537,16 @@ def load_unsw_nb15_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.nd
     # Step 1: Deduplicate BEFORE split — prevents same flow in train and test
     df = _deduplicate_dataframe(df, logger="UNSW-NB15")
 
-    # Step 2: Map attack categories
+    # Step 2: Map attack categories to universal taxonomy if requested
     if "attack_cat" in df.columns:
         df["attack_cat"] = df["attack_cat"].str.strip()
-        df["attack_category"] = df["attack_cat"].map(UNSW_ATTACK_MAP).fillna("Unknown")
+        if use_universal:
+            df["attack_category"] = df["attack_cat"].map(UNSW_ATTACK_MAP).fillna("Unknown")
+            # Apply universal taxonomy
+            universal_map = UNIVERSAL_ATTACK_MAPS["unsw_nb15"]
+            df["attack_category"] = df["attack_category"].map(universal_map).fillna("Attack")
+        else:
+            df["attack_category"] = df["attack_cat"].map(UNSW_ATTACK_MAP).fillna("Unknown")
     else:
         raise ValueError("UNSW-NB15 dataset missing 'attack_cat' column")
 
@@ -480,8 +555,13 @@ def load_unsw_nb15_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.nd
     df.drop(columns=drop_cols, inplace=True, errors="ignore")
 
     # Step 3: Encode target
-    le = LabelEncoder()
-    y_all = le.fit_transform(df["attack_category"].values)
+    if use_universal:
+        le = LabelEncoder()
+        y_all = le.fit_transform(df["attack_category"].values).astype(np.int64)
+        le.classes_ = np.array(UNIVERSAL_CLASS_NAMES)
+    else:
+        le = LabelEncoder()
+        y_all = le.fit_transform(df["attack_category"].values).astype(np.int64)
     df.drop(columns=["attack_category"], inplace=True)
 
     # Step 4: One-hot encode categoricals BEFORE scaling
@@ -494,7 +574,7 @@ def load_unsw_nb15_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.nd
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df.fillna(df.median(), inplace=True)
 
-    # FIX 6: Train/test split FIRST, THEN fit scaler on train only (no leakage).
+    #  Train/test split FIRST, THEN fit scaler on train only (no leakage).
     X_all = df.values.astype(np.float32)
     y_all = y_all.astype(np.int64)
 
@@ -550,8 +630,14 @@ def load_unsw_nb15_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.nd
 #  IoMT Dataset
 # ─────────────────────────────────────────
 
-def load_iomt_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, LabelEncoder]:
-    """Load all IoMT CSV files, sample, clean, and return (df, X, y, le)."""
+def load_iomt_dataset(cfg: Config, use_universal: bool = False) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, LabelEncoder]:
+    """
+    Load all IoMT CSV files, sample, clean, and return (df, X, y, le).
+
+    Args:
+        cfg: Config object
+        use_universal: if True, map to 3-class universal taxonomy
+    """
     iomt_dir = os.path.join(DATASET_DIR, "CIC-BCCC-NRC-IoMT-2024")
     frames = []
     for fname in os.listdir(iomt_dir):
@@ -563,7 +649,6 @@ def load_iomt_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray
         except Exception as e:
             print(f"[WARN] Skip {fname}: {e}")
             continue
-        # sample large files
         if len(df_chunk) > cfg.training.sample_limit_per_file:
             df_chunk = df_chunk.sample(
                 n=cfg.training.sample_limit_per_file, random_state=cfg.training.seed
@@ -575,13 +660,21 @@ def load_iomt_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray
     # Deduplicate BEFORE split — prevents same flow appearing in train and test
     df = _deduplicate_dataframe(df, logger="IoMT")
 
-    # Map attack names to categories
+    # Map attack names to original or universal categories
     if "Attack Name" in df.columns:
-        df["attack_category"] = df["Attack Name"].map(IOMT_ATTACK_MAP).fillna("Unknown")
+        if use_universal:
+            universal_map = UNIVERSAL_ATTACK_MAPS["iomt_2024"]
+            df["attack_category"] = df["Attack Name"].apply(
+                lambda x: universal_map.get(str(x).strip(), "Attack")
+            )
+        else:
+            df["attack_category"] = df["Attack Name"].map(IOMT_ATTACK_MAP).fillna("Unknown")
     elif "Label" in df.columns:
         df["attack_category"] = df["Label"].apply(lambda x: "Benign" if x == 0 else "Attack")
     else:
         raise ValueError("IoMT dataset missing label columns")
+
+    attack_categories = df["attack_category"].values.copy()
 
     # Drop non-numeric identifiers
     drop_existing = [c for c in IOMT_DROP_COLS if c in df.columns]
@@ -592,19 +685,22 @@ def load_iomt_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray
         df.drop(columns=["Label"], inplace=True, errors="ignore")
 
     # Encode target
-    le = LabelEncoder()
-    y = le.fit_transform(df["attack_category"].values)
-    df.drop(columns=["attack_category"], inplace=True)
+    if use_universal:
+        le = LabelEncoder()
+        y = le.fit_transform(attack_categories).astype(np.int64)
+        le.classes_ = np.array(UNIVERSAL_CLASS_NAMES)
+    else:
+        le = LabelEncoder()
+        y = le.fit_transform(attack_categories).astype(np.int64)
+
+    df.drop(columns=["attack_category"], inplace=True, errors="ignore")
 
     # Clean numeric data
     df = df.apply(pd.to_numeric, errors="coerce")
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df.fillna(df.median(), inplace=True)  # median imputation preserves distribution
+    df.fillna(df.median(), inplace=True)
 
-    # FIX 6: Return RAW (unscaled) features. Scaler is fit AFTER train/test split
-    # in load_dataset() to prevent test-set leakage into the scaler statistics.
     X = df.values.astype(np.float32)
-    y = y.astype(np.int64)
 
     print(f"[IoMT] Loaded {X.shape[0]} samples, {X.shape[1]} features, "
           f"{len(le.classes_)} classes: {list(le.classes_)}")
@@ -615,8 +711,14 @@ def load_iomt_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray
 #  NSL-KDD Dataset
 # ─────────────────────────────────────────
 
-def load_nsl_kdd_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, LabelEncoder]:
-    """Load NSL-KDD train+test, clean, encode, return (df, X, y, le)."""
+def load_nsl_kdd_dataset(cfg: Config, use_universal: bool = False) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, LabelEncoder]:
+    """
+    Load NSL-KDD train+test, clean, encode, return (df, X, y, le).
+
+    Args:
+        cfg: Config object
+        use_universal: if True, map to 3-class universal taxonomy
+    """
     kdd_dir = os.path.join(DATASET_DIR, "NSL-KDD")
     train_path = os.path.join(kdd_dir, "KDDTrain+.txt")
     test_path = os.path.join(kdd_dir, "KDDTest+.txt")
@@ -628,27 +730,34 @@ def load_nsl_kdd_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.ndar
     # Deduplicate BEFORE split — prevents same flow appearing in train and test
     df = _deduplicate_dataframe(df, logger="NSL-KDD")
 
-    # Map labels to categories
-    df["attack_category"] = df["label"].map(NSL_KDD_ATTACK_MAP).fillna("Unknown")
+    # Store original attack labels BEFORE dropping
+    original_labels = df["label"].values.copy()
+
+    # Map labels to original categories
+    attack_categories = pd.Series(original_labels).map(NSL_KDD_ATTACK_MAP).fillna("Unknown").values
+
+    if use_universal:
+        # Map to universal taxonomy: Benign/Attack/Recon → 0/1/2
+        universal_map = UNIVERSAL_ATTACK_MAPS["nsl_kdd"]
+        universal_categories = pd.Series(attack_categories).map(universal_map).values
+        le = LabelEncoder()
+        y = le.fit_transform(universal_categories).astype(np.int64)
+        le.classes_ = np.array(UNIVERSAL_CLASS_NAMES)
+    else:
+        le = LabelEncoder()
+        y = le.fit_transform(attack_categories).astype(np.int64)
+
     df.drop(columns=["label", "difficulty"], inplace=True)
 
     # One-hot encode categoricals
     df = pd.get_dummies(df, columns=NSL_KDD_CATEGORICAL, drop_first=False)
-
-    # Encode target
-    le = LabelEncoder()
-    y = le.fit_transform(df["attack_category"].values)
-    df.drop(columns=["attack_category"], inplace=True)
 
     # Clean numeric data
     df = df.apply(pd.to_numeric, errors="coerce")
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df.fillna(df.median(), inplace=True)
 
-    # FIX 6: Return RAW (unscaled) features. Scaler is fit AFTER train/test split
-    # in load_dataset() to prevent test-set leakage into the scaler statistics.
     X = df.values.astype(np.float32)
-    y = y.astype(np.int64)
 
     print(f"[NSL-KDD] Loaded {X.shape[0]} samples, {X.shape[1]} features, "
           f"{len(le.classes_)} classes: {list(le.classes_)}")
@@ -659,8 +768,14 @@ def load_nsl_kdd_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.ndar
 #  Edge-IIoT Dataset (CIC-BCCC-NRC-Edge-IIoTSet-2022)
 # ─────────────────────────────────────────
 
-def load_edge_iiot_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, LabelEncoder]:
-    """Load all Edge-IIoT CSV files, sample, clean, and return (df, X, y, le)."""
+def load_edge_iiot_dataset(cfg: Config, use_universal: bool = False) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, LabelEncoder]:
+    """
+    Load all Edge-IIoT CSV files, sample, clean, and return (df, X, y, le).
+
+    Args:
+        cfg: Config object
+        use_universal: if True, map to 3-class universal taxonomy
+    """
     edge_dir = os.path.join(DATASET_DIR, "CIC-BCCC-NRC-Edge-IIoTSet-2022")
     frames = []
     for fname in os.listdir(edge_dir):
@@ -683,11 +798,21 @@ def load_edge_iiot_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.nd
     # Deduplicate BEFORE split — prevents same flow appearing in train and test
     df = _deduplicate_dataframe(df, logger="Edge-IIoT")
 
-    # Map attack names to categories
+    # Map attack names to original categories
     if "Attack Name" in df.columns:
-        df["attack_category"] = df["Attack Name"].map(EDGE_IIOT_ATTACK_MAP).fillna("Unknown")
+        if use_universal:
+            # Map directly to universal taxonomy
+            universal_map = UNIVERSAL_ATTACK_MAPS["edge_iiot"]
+            df["attack_category"] = df["Attack Name"].apply(
+                lambda x: universal_map.get(str(x).strip(), "Attack")
+            )
+        else:
+            df["attack_category"] = df["Attack Name"].map(EDGE_IIOT_ATTACK_MAP).fillna("Unknown")
     else:
         raise ValueError("Edge-IIoT dataset missing 'Attack Name' column")
+
+    # Store attack_category before dropping Attack Name
+    attack_categories = df["attack_category"].values.copy()
 
     # Drop non-numeric identifiers
     drop_existing = [c for c in EDGE_IIOT_DROP_COLS if c in df.columns]
@@ -698,19 +823,22 @@ def load_edge_iiot_dataset(cfg: Config) -> Tuple[pd.DataFrame, np.ndarray, np.nd
         df.drop(columns=["Label"], inplace=True, errors="ignore")
 
     # Encode target
-    le = LabelEncoder()
-    y = le.fit_transform(df["attack_category"].values)
-    df.drop(columns=["attack_category"], inplace=True)
+    if use_universal:
+        le = LabelEncoder()
+        y = le.fit_transform(attack_categories).astype(np.int64)
+        le.classes_ = np.array(UNIVERSAL_CLASS_NAMES)
+    else:
+        le = LabelEncoder()
+        y = le.fit_transform(attack_categories).astype(np.int64)
+
+    df.drop(columns=["attack_category"], inplace=True, errors="ignore")
 
     # Clean numeric data
     df = df.apply(pd.to_numeric, errors="coerce")
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df.fillna(df.median(), inplace=True)
 
-    # FIX 6: Return RAW (unscaled) features. Scaler is fit AFTER train/test split
-    # in load_dataset() to prevent test-set leakage into the scaler statistics.
     X = df.values.astype(np.float32)
-    y = y.astype(np.int64)
 
     print(f"[Edge-IIoT] Loaded {X.shape[0]} samples, {X.shape[1]} features, "
           f"{len(le.classes_)} classes: {list(le.classes_)}")
@@ -818,33 +946,46 @@ def load_dataset(cfg: Config):
       2. UNSW-NB15: internal split + scale + feature selection + ADASYN+RENN balance.
       3. Other datasets: split → fit scaler on train only (FIX 6) →
          ADASYN+RENN balance on training only (FIX 7) → return.
+      4. Unified: load all 4 datasets → map to universal 3-class taxonomy →
+         combine → federated partition.
+
+    For "unified" dataset mode:
+      - Loads all 4 available datasets
+      - Maps all attack categories to 3-class universal taxonomy
+      - Combines into one large dataset
+      - Standard FL train/test split and balancing applied
     """
+    if cfg.training.dataset == "unified":
+        return _load_unified_dataset(cfg)
+
     if cfg.training.dataset == "unsw_nb15":
         # UNSW has internal split + scaler + ADASYN+RENN balancing on training data only
         df, X_train, y_train, X_test, y_test, le = load_unsw_nb15_dataset(cfg)
         return X_train, X_test, y_train, y_test, le
 
+    use_universal = False  # per-dataset modes use original taxonomy
+
     if cfg.training.dataset == "iomt_2024":
-        df, X, y, le = load_iomt_dataset(cfg)
+        df, X, y, le = load_iomt_dataset(cfg, use_universal=use_universal)
     elif cfg.training.dataset == "nsl_kdd":
-        df, X, y, le = load_nsl_kdd_dataset(cfg)
+        df, X, y, le = load_nsl_kdd_dataset(cfg, use_universal=use_universal)
     elif cfg.training.dataset == "edge_iiot":
-        df, X, y, le = load_edge_iiot_dataset(cfg)
+        df, X, y, le = load_edge_iiot_dataset(cfg, use_universal=use_universal)
     else:
         raise ValueError(f"Unknown dataset: {cfg.training.dataset}")
 
-    # Stratified split BEFORE any scaler fit (FIX 6: no leakage)
+    # no leakage)
     X_train_raw, X_test_raw, y_train, y_test = train_test_split(
         X, y, test_size=cfg.training.test_ratio,
         random_state=cfg.training.seed, stratify=y,
     )
 
-    # FIX 6: fit MinMaxScaler on training data only, then transform both splits
+    #  fit MinMaxScaler on training data only, then transform both splits
     scaler = MinMaxScaler()
     X_train = scaler.fit_transform(X_train_raw).astype(np.float32)
     X_test = scaler.transform(X_test_raw).astype(np.float32)
 
-    # FIX 7: ADASYN+RENN balancing on TRAIN only (matches UNSW pipeline).
+    #  ADASYN+RENN balancing on TRAIN only (matches UNSW pipeline).
     # Test set stays imbalanced for fair evaluation.
     print(f"  Balancing {cfg.training.dataset} training data...")
     X_train, y_train = balance_dataset(
@@ -856,6 +997,145 @@ def load_dataset(cfg: Config):
     )
 
     return X_train, X_test, y_train, y_test, le
+
+
+def _load_unified_dataset(cfg: Config):
+    """
+    Load all available datasets and map to universal 3-class taxonomy.
+
+    Pipeline:
+      1. Load each dataset with universal taxonomy mapping
+      2. Normalize each dataset individually (different feature spaces)
+      3. Concatenate all datasets
+      4. Train/test split with stratification
+      5. ADASYN+RENN balancing on combined training data
+
+    Returns:
+      X_train, X_test, y_train, y_test, le
+      where le.classes_ = ["Benign", "Attack", "Recon"]
+    """
+    print("\n[UNIFIED] Loading all datasets with universal 3-class taxonomy...")
+    all_X_train, all_X_test, all_y_train, all_y_test = [], [], [], []
+
+    dataset_names = []
+    for name, loader_func in [
+        ("edge_iiot", load_edge_iiot_dataset),
+        ("nsl_kdd", load_nsl_kdd_dataset),
+        ("iomt_2024", load_iomt_dataset),
+        ("unsw_nb15", None),  # handled separately
+    ]:
+        if loader_func is None:
+            continue  # skip unsw for now, handle separately
+        try:
+            df, X, y, le = loader_func(cfg, use_universal=True)
+            print(f"  [UNIFIED] Loaded {name}: {X.shape[0]} samples, {X.shape[1]} features, "
+                  f"{len(le.classes_)} classes: {list(le.classes_)}")
+            dataset_names.append(name)
+
+            # Individual train/test split
+            X_tr, X_te, y_tr, y_te = train_test_split(
+                X, y, test_size=cfg.training.test_ratio,
+                random_state=cfg.training.seed, stratify=y,
+            )
+
+            # Normalize individually
+            scaler = MinMaxScaler()
+            X_tr = scaler.fit_transform(X_tr).astype(np.float32)
+            X_te = scaler.transform(X_te).astype(np.float32)
+
+            all_X_train.append(X_tr)
+            all_X_test.append(X_te)
+            all_y_train.append(y_tr)
+            all_y_test.append(y_te)
+        except Exception as e:
+            print(f"  [UNIFIED] Skipping {name}: {e}")
+
+    # Handle UNSW-NB15 separately (has built-in feature selection pipeline)
+    try:
+        df, X_tr, y_tr, X_te, y_te, le_unsw = load_unsw_nb15_dataset(cfg, use_universal=True)
+        print(f"  [UNIFIED] Loaded unsw_nb15: {X_tr.shape[0]} samples, "
+              f"{X_tr.shape[1]} features, {len(le_unsw.classes_)} classes")
+        all_X_train.append(X_tr)
+        all_X_test.append(X_te)
+        all_y_train.append(y_tr)
+        all_y_test.append(y_te)
+        dataset_names.append("unsw_nb15")
+    except Exception as e:
+        print(f"  [UNIFIED] Skipping unsw_nb15: {e}")
+
+    if not all_X_train:
+        raise RuntimeError("[UNIFIED] No datasets loaded. Ensure Dataset/ directory contains CSV files.")
+
+    # ── Universal feature alignment ──────────────────────────────────────────
+    # All datasets must have the same feature dimension for federated training.
+    # We use feature selection to find a common feature space.
+    print(f"  [UNIFIED] Aligning features across {len(all_X_train)} datasets...")
+
+    # Find common feature dimension (minimum among all datasets)
+    min_features = min(x.shape[1] for x in all_X_train)
+    max_features = max(x.shape[1] for x in all_X_train)
+
+    if min_features == max_features:
+        print(f"  [UNIFIED] All datasets have same feature dim ({min_features}), concatenating directly.")
+        X_train_combined = np.concatenate(all_X_train, axis=0)
+        X_test_combined = np.concatenate(all_X_test, axis=0)
+        y_train_combined = np.concatenate(all_y_train, axis=0)
+        y_test_combined = np.concatenate(all_y_test, axis=0)
+    else:
+        print(f"  [UNIFIED] Feature dims vary ({min_features}-{max_features}). "
+              f"Using shared feature selection on combined data.")
+        # Concatenate first, then apply feature selection
+        X_all = np.concatenate(all_X_train, axis=0)
+        y_all = np.concatenate(all_y_train, axis=0)
+
+        # Feature selection on combined data (ADASYN-balanced for fair feature importance)
+        X_selected, feat_idx = select_features(
+            X_all, y_all,
+            method="rf_importance",
+            corr_threshold=0.90,
+            random_state=cfg.training.seed,
+            use_balanced=True,
+        )
+
+        # Apply same feature selection to all datasets
+        new_X_train, new_X_test = [], []
+        for X_tr, X_te in zip(all_X_train, all_X_test):
+            new_X_train.append(X_tr[:, feat_idx])
+            new_X_test.append(X_te[:, feat_idx])
+
+        X_train_combined = np.concatenate(new_X_train, axis=0)
+        X_test_combined = np.concatenate(new_X_test, axis=0)
+        y_train_combined = np.concatenate(all_y_train, axis=0)
+        y_test_combined = np.concatenate(all_y_test, axis=0)
+
+        print(f"  [UNIFIED] After feature alignment: {X_train_combined.shape[1]} features, "
+              f"{X_train_combined.shape[0]} train samples")
+
+    # ── Shuffle combined dataset ───────────────────────────────────────────
+    rng = np.random.RandomState(cfg.training.seed)
+    perm = rng.permutation(len(X_train_combined))
+    X_train_combined = X_train_combined[perm]
+    y_train_combined = y_train_combined[perm]
+
+    # ── ADASYN+RENN balancing on unified training data ─────────────────────
+    print(f"  [UNIFIED] Balancing unified training data ({len(X_train_combined)} samples)...")
+    X_train_bal, y_train_bal = balance_dataset(
+        X_train_combined, y_train_combined,
+        method="adasyn_enn",
+        k_neighbors=5,
+        sampling_strategy=0.5,
+        random_state=cfg.training.seed,
+    )
+
+    # Universal label encoder
+    le = LabelEncoder()
+    le.classes_ = np.array(UNIVERSAL_CLASS_NAMES)  # ["Benign", "Attack", "Recon"]
+
+    print(f"\n  [UNIFIED] Final: {X_train_bal.shape[0]} train (balanced), "
+          f"{X_test_combined.shape[0]} test (imbalanced), "
+          f"{X_train_bal.shape[1]} features, 3 classes: {UNIVERSAL_CLASS_NAMES}")
+
+    return X_train_bal, X_test_combined, y_train_bal, y_test_combined, le
 
 
 class DataPreprocessor:
@@ -886,6 +1166,12 @@ class DataPreprocessor:
         "unsw_nb15": {
             "num_classes": 10,
             "seq_len": 5,
+            "normalize_method": "minmax",
+            "has_temporal": True,
+        },
+        "unified": {
+            "num_classes": 3,  # Benign, Attack, Recon (universal 3-class taxonomy)
+            "seq_len": 8,
             "normalize_method": "minmax",
             "has_temporal": True,
         },

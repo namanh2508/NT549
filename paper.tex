@@ -46,7 +46,7 @@
 
 \begin{document}
 
-\title{FedRL-IDS: Federated Reinforcement Learning for Intrusion Detection with Tri-Technique Aggregation and Temporal Reputation-Enhanced Trust}
+\title{FedRL-IDS: Resource-Efficient and Byzantine-Robust Federated Intrusion Detection via Reinforcement Learning}
 
 \author{
 \IEEEauthorblockN{Anonymous Authors}
@@ -57,11 +57,11 @@ Ho Chi Minh City, Vietnam}
 \maketitle
 
 \begin{abstract}
-Network Intrusion Detection Systems (NIDS) face critical challenges in distributed IoT/IIoT environments: data heterogeneity (non-IID), privacy constraints, vulnerability to Byzantine adversarial participants, and the need for adaptive detection against evolving attacks. We propose \textbf{FedRL-IDS}, a novel three-tier federated reinforcement learning framework that integrates Proximal Policy Optimization (PPO) with a tri-technique aggregation pipeline combining FLTrust, Fed+, and Dynamic Attention. Our contributions include: (1) a Tier-3 Bernoulli PPO client selector with 8-feature state representation (including gradient alignment and minority class fraction) using hybrid scoring $\mathrm{Score}_k = \pi_{\mathrm{sel}}(k|s) \times \mathrm{Trust}_k \times \mathrm{Attention}_k$; (2) temporal reputation-enhanced trust scoring with growth ($\gamma_r=0.1$) exceeding decay ($\delta_r=0.05$) for Byzantine-robust aggregation; (3) an adaptive entropy coefficient scaled by the number of classes to prevent action collapse in multi-class settings; (4) an MCC-based composite reward function that handles class imbalance without multi-objective reward conflicts; (5) an autoencoder-based novelty detector with periodic retraining for zero-day attack detection; and (6) a CNN-GRU-CBAM backbone architecture for temporal pattern recognition in network flows. We evaluate FedRL-IDS on four benchmark datasets---NSL-KDD, UNSW-NB15, CIC Edge-IIoT 2022, and CIC IoMT 2024---under non-IID federated settings. Results demonstrate that FedRL-IDS achieves 88.90\% accuracy on NSL-KDD with 6.40\% FPR, 99.98\% F1-score on Edge-IIoT, and 96.83\% F1-score on IoMT within 10 communication rounds.
+Network Intrusion Detection Systems (NIDS) face critical challenges in distributed IoT/IIoT environments: data heterogeneity (non-IID), privacy constraints, vulnerability to Byzantine adversarial participants, and the need for adaptive detection. We propose \textbf{FedRL-IDS}, a federated reinforcement learning framework for intrusion detection that addresses these challenges through a clean separation of concerns between two complementary mechanisms. First, \textbf{FLTrust with temporal reputation} (growth $\gamma_r=0.1$ exceeds decay $\delta_r=0.05$) provides Byzantine-robust aggregation by bootstrapping trust from a server-side root dataset and computing cosine similarity between client and server model updates. Second, a \textbf{Reinforcement Learning (PPO) client selector} learns to minimise communication overhead by selecting the fewest clients that maintain global model quality — cleanly separating the resource-efficiency objective (RL's job) from the Byzantine-robustness objective (FLTrust's job). Our contributions include: (1) a Bernoulli PPO client selector with 7-feature state and a resource-efficiency reward function $R_t = \Delta\mathrm{Acc} - \lambda|S_t|/K - \gamma \cdot \mathrm{mean}(1 - \mathrm{Trust}_k)$; (2) FLTrust with RL-UDHFL-inspired temporal reputation for Byzantine-robust aggregation; (3) an MCC-based composite reward function for handling class imbalance; and (4) a CNN-GRU-CBAM backbone architecture. We evaluate FedRL-IDS on four benchmark datasets---NSL-KDD, UNSW-NB15, CIC Edge-IIoT 2022, and CIC IoMT 2024---under non-IID federated settings. Results demonstrate that FedRL-IDS achieves strong detection performance within 10 communication rounds while minimising the number of clients required per round.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Federated Learning, Reinforcement Learning, Intrusion Detection System, PPO, CNN-GRU, CBAM, Byzantine Robustness, IoT Security, Dynamic Attention, Client Selection, Meta-Agent, Novelty Detection, Autoencoder, Non-IID
+Federated Learning, Reinforcement Learning, Intrusion Detection System, PPO, CNN-GRU, CBAM, Byzantine Robustness, IoT Security, Client Selection, Non-IID, FLTrust, Resource Efficiency
 \end{IEEEkeywords}
 
 %=====================================================================
@@ -81,28 +81,26 @@ The rapid proliferation of Internet of Things (IoT) and Industrial IoT (IIoT) de
 \end{enumerate}
 
 \textbf{Why Federated Reinforcement Learning?}
-Reinforcement learning, particularly Proximal Policy Optimization (PPO)~\cite{rlintro}, is well-suited for IDS due to its ability to formulate classification as a sequential decision-making problem, directly optimize task-relevant objectives, and adapt to evolving environments. Recent works~\cite{sfedrl, fedrl_attention} have demonstrated competitive intrusion detection using federated RL while preserving data privacy. However, these approaches lack simultaneous mechanisms for Byzantine robustness, personalized aggregation under non-IID data, zero-day attack detection, and intelligent client selection.
+Reinforcement learning, particularly Proximal Policy Optimization (PPO)~\cite{rlintro}, is well-suited for IDS due to its ability to formulate classification as a sequential decision-making problem, directly optimize task-relevant objectives, and adapt to evolving environments. Recent works~\cite{sfedrl, fedrl_attention} have demonstrated competitive intrusion detection using federated RL while preserving data privacy. However, these approaches lack simultaneous mechanisms for Byzantine robustness and intelligent client selection.
 
 \textbf{Limitations of Prior Work.}
-Existing federated IDS methods each address only a subset of these challenges. SFedRL-IDS~\cite{sfedrl} introduced hierarchical federated RL but relies on standard FedAvg aggregation (Byzantine-vulnerable and non-IID-sensitive). PriFED-IDS~\cite{prifeds} addresses privacy via differential privacy but provides no trust management. FLTrust~\cite{fltrust} achieves Byzantine robustness using a server-side root dataset but treats each round independently without temporal memory. Fed+~\cite{fedplus} excels at personalization under non-IID settings but operates on supervised learning models. The federated RL framework with dynamic attention~\cite{fedrl_attention} introduces performance-aware weighting but omits both Byzantine robustness and personalization. RL-UDHFL~\cite{rludhfl} incorporated temporal reputation tracking but applied a simplified trust model with decay exceeding growth ($\delta_r > \gamma_r$), structurally biasing reputation toward zero. No existing work simultaneously combines Byzantine robustness, non-IID personalization, fairness-aware attention, and RL-based adaptive detection within a unified federated framework.
+Existing federated IDS methods each address only a subset of these challenges. SFedRL-IDS~\cite{sfedrl} introduced hierarchical federated RL but relies on standard FedAvg aggregation (Byzantine-vulnerable and non-IID-sensitive). PriFED-IDS~\cite{prifeds} addresses privacy via differential privacy but provides no trust management. FLTrust~\cite{fltrust} achieves Byzantine robustness using a server-side root dataset but treats each round independently without temporal memory. RL-UDHFL~\cite{rludhfl} incorporated temporal reputation tracking but applied a simplified trust model with decay exceeding growth ($\delta_r > \gamma_r$), structurally biasing reputation toward zero. No existing work simultaneously combines Byzantine robustness with RL-based resource-efficient client selection within a unified federated RL framework for IDS.
 
 \textbf{Our Approach.}
-In this paper, we propose \textbf{FedRL-IDS}, a comprehensive three-tier federated reinforcement learning framework for intrusion detection that addresses all three challenges through a unified \emph{tri-technique aggregation pipeline} combining FLTrust, Fed+, and Dynamic Attention. At the core, $N$ distributed PPO agents---each safeguarding a local network segment---are coordinated by a central server that aggregates local model updates through a sequential pipeline. Key innovations include: (1) FLTrust with RL-UDHFL-inspired temporal reputation where growth ($\gamma_r=0.1$) exceeds decay ($\delta_r=0.05$); (2) Fed+ personalization preserving per-client model components under non-IID distributions; (3) Dynamic Attention based on training loss (not accuracy) for fairness; (4) a Tier-3 Bernoulli PPO client selector with 8-feature state and hybrid scoring gated by trust and attention signals; (5) an autoencoder-based novelty detector with periodic retraining for zero-day attack detection; and (6) a CNN-GRU-CBAM backbone architecture for temporal network flow patterns.
+In this paper, we propose \textbf{FedRL-IDS}, a federated reinforcement learning framework for intrusion detection that addresses all three challenges through a clean separation of concerns between two complementary mechanisms. The key insight is that Byzantine robustness (via FLTrust) and communication efficiency (via RL) are orthogonal objectives that should not interfere with each other. Rather than stacking multiple aggregation techniques that create conflicting authority domains, we use a minimalist two-component design: FLTrust handles Byzantine robustness while a PPO-based RL selector learns to minimise the number of clients required per round. This decoupling prevents the false credit assignment problem where a poorly-designed RL reward is rescued by a robust aggregator, causing the RL agent to never learn correctly. Key innovations include: (1) FLTrust with temporal reputation where growth ($\gamma_r=0.1$) exceeds decay ($\delta_r=0.05$); (2) a resource-efficiency RL selector with Bernoulli policy and a reward function that penalises selecting many clients and clients with low trust scores; (3) an MCC-based composite reward function for class imbalance; and (4) a CNN-GRU-CBAM backbone architecture.
 
 Our key contributions are:
 
 \begin{enumerate}
-    \item \textbf{Tri-Technique Aggregation}: A novel combination of FLTrust (Byzantine robustness), Fed+ (personalization for non-IID data), and Dynamic Attention (fairness-aware weighting) in a unified pipeline.
+    \item \textbf{Clean Separation of Concerns}: Byzantine robustness (FLTrust) and communication efficiency (RL) are handled by separate, non-interfering mechanisms. FLTrust computes trust from gradient alignment; RL Selector learns how few clients suffice.
 
-    \item \textbf{Temporal Reputation-Enhanced Trust}: FLTrust extended with RL-UDHFL-inspired temporal reputation where growth ($\gamma_r=0.1$) \emph{exceeds} decay ($\delta_r=0.05$), preventing the trust collapse observed when decay dominates.
+    \item \textbf{Temporal Reputation-Enhanced FLTrust}: FLTrust extended with RL-UDHFL-inspired temporal reputation where growth ($\gamma_r=0.1$) \emph{exceeds} decay ($\delta_r=0.05$), preventing the trust collapse observed when decay dominates.
 
-    \item \textbf{Three-Tier Multi-Agent Architecture}: A hierarchical design with Tier-1 local PPO agents (CNNGRUActor backbone), a Tier-2 meta-agent (CNNGRUActor over one-hot agent actions) for coordinated decision-making, and a Tier-3 Bernoulli PPO client selector for intelligent client selection.
+    \item \textbf{Resource-Efficient RL Client Selection}: A Bernoulli PPO selector with 7-feature state ($R_k, l_k, \Delta_k, g_k, \mathrm{f1}_k, s_k, m_k$) and a resource-efficiency reward function $R_t = \Delta\mathrm{Acc} - \lambda|S_t|/K - \gamma \cdot \mathrm{mean}_{k\in S_t}(1 - R_k)$, eliminating the authority overlap with FLTrust.
 
-    \item \textbf{RL-Based Client Selection with Hybrid Scoring}: A novel Bernoulli PPO selector with 8-feature state ($R_k, a_k, l_k, \Delta_k, g_k, \mathrm{f1}_k, s_k, m_k$) including gradient alignment $g_k = \cos(\Delta_k, \Delta_{\mathrm{glob}})$ and minority class fraction $m_k$, with hybrid scoring $\mathrm{Score}_k = \pi_{\mathrm{sel}}(k|s) \times \mathrm{Trust}_k \times \mathrm{Attention}_k$.
+    \item \textbf{MCC-Based Composite Reward}: A reward function using Matthews Correlation Coefficient (MCC) as the primary signal, supplemented by cost-sensitive TP/TN/FP/FN penalties and collapse penalty, eliminating multi-objective reward conflicts.
 
-    \item \textbf{MCC-Based Composite Reward}: A reward function using Matthews Correlation Coefficient (MCC) as the primary signal, supplemented by cost-sensitive TP/TN/FP/FN penalties, novelty bonus, and collapse penalty, eliminating the multi-objective reward conflicts observed with 12+ component rewards.
-
-    \item \textbf{CNN-GRU-CBAM Backbone}: A novel backbone architecture combining Conv1D (multi-scale temporal pattern extraction), CBAM attention (channel and spatial attention), and bidirectional GRU (temporal learning), adapted for 1D network flow sequences.
+    \item \textbf{CNN-GRU-CBAM Backbone}: A backbone architecture combining Conv1D (multi-scale temporal pattern extraction), CBAM attention (channel and spatial attention), and GRU (temporal learning), adapted for 1D network flow sequences.
 
     \item \textbf{Comprehensive Evaluation}: Extensive experiments on four diverse benchmarks (NSL-KDD, UNSW-NB15, CIC Edge-IIoT 2022, CIC IoMT 2024) under non-IID federated settings, demonstrating strong performance within 10 communication rounds.
 \end{enumerate}
@@ -147,19 +145,18 @@ No prior work simultaneously combines Byzantine robustness, non-IID personalizat
 
 \subsection{System Overview}
 
-FedRL-IDS implements a \textbf{three-tier architecture}:
+FedRL-IDS implements a \textbf{two-tier architecture}:
 
 \begin{table}[t]
 \centering
-\caption{Three-Tier Architecture of FedRL-IDS}
+\caption{Two-Tier Architecture of FedRL-IDS}
 \label{tab:tiers}
 \begin{tabular}{cp{5.5cm}c}
 \toprule
 \textbf{Tier} & \textbf{Component} & \textbf{Policy} \\
 \midrule
 Tier-1 & Local PPO Agents ($N$ clients) & Categorical \\
-Tier-2 & Meta-Agent (Coordinator) & CNNGRUActor Categorical \\
-Tier-3 & RL Client Selector & Bernoulli \\
+Tier-2 & RL Client Selector & Bernoulli \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -177,8 +174,6 @@ The central server coordinates $N$ distributed agents (default $N=10$), each mon
     agentbox/.style={box, fill=fedblue!15, draw=fedblue!70, text=darktext},
     serverbox/.style={box, fill=trustgreen!15, draw=trustgreen!70, text=darktext},
     aggbox/.style={box, fill=attnorange!15, draw=attnorange!70, text=darktext},
-    metabox/.style={box, fill=metapurple!15, draw=metapurple!70, text=darktext},
-    novelbox/.style={box, fill=novelcyan!15, draw=novelcyan!70, text=darktext},
     envbox/.style={draw, dashed, rounded corners=6pt, inner sep=10pt},
     arrowstyle/.style={->, thick, color=#1},
     dashedarrow/.style={->, dashed, thick, color=#1},
@@ -187,60 +182,40 @@ The central server coordinates $N$ distributed agents (default $N=10$), each mon
 % === Central Server ===
 \node[serverbox, minimum width=3.5cm, minimum height=1.2cm] (server) {\large Central Server\\(Root Dataset)};
 
-% === Aggregation Components ===
-\node[aggbox, below=1.5cm of server, xshift=-5cm] (fltrust) {FLTrust\\+ Temporal\\Reputation};
-\node[aggbox, below=1.5cm of server] (fedplus) {Fed+\\Personalization};
-\node[aggbox, below=1.5cm of server, xshift=5cm] (dynattn) {Dynamic\\Attention};
+% === FLTrust aggregation ===
+\node[aggbox, below=1.5cm of server] (fltrust) {FLTrust Aggregation\\Temporal Reputation\\Cosine Similarity};
 
-\begin{scope}[on background layer]
-\node[envbox, fill=attnorange!5, fit=(fltrust)(fedplus)(dynattn), label={[font=\small\bfseries, text=attnorange!80!black]above:Tri-Technique Aggregation Pipeline}] (agggroup) {};
-\end{scope}
-
-% === Server to Agg connections ===
+% === Server to FLTrust connections ===
 \draw[arrowstyle=trustgreen!70, <->] (server.south) -- (fltrust.north);
-\draw[arrowstyle=trustgreen!70, <->] (server.south) -- (fedplus.north);
-\draw[arrowstyle=trustgreen!70, <->] (server.south) -- (dynattn.north);
-
-% Agg internal flow
-\draw[arrowstyle=attnorange!80, ->] (fltrust.east) -- node[above, font=\scriptsize]{Trust} (fedplus.west);
-\draw[arrowstyle=attnorange!80, ->] (dynattn.west) -- node[above, font=\scriptsize]{Attention} (fedplus.east);
 
 % === Local Agents (bottom) ===
-\node[agentbox, below=3.5cm of fltrust, xshift=-1.5cm] (agent1) {Agent 1\\CNNGRU};
-\node[agentbox, below=3.5cm of fltrust, xshift=2.5cm] (agent2) {Agent 2\\CNNGRU};
-\node[agentbox, below=3.5cm of dynattn, xshift=-2.5cm] (agent3) {Agent 3\\CNNGRU};
-\node[agentbox, below=3.5cm of dynattn, xshift=1.5cm] (agentN) {Agent N\\CNNGRU};
+\node[agentbox, below=3.5cm of fltrust, xshift=-2.5cm] (agent1) {Agent 1\\CNN-GRU-CBAM};
+\node[agentbox, below=3.5cm of fltrust, xshift=2.5cm] (agent2) {Agent 2\\CNN-GRU-CBAM};
+\node[agentbox, below=3.5cm of agent1, xshift=5cm] (agentN) {Agent $N$\\ CNN-GRU-CBAM};
 
 \begin{scope}[on background layer]
-\node[envbox, fill=fedblue!5, fit=(agent1)(agent2)(agent3)(agentN), label={[font=\small\bfseries, text=fedblue!80!black]below:Tier-1: Local PPO Agents (Non-IID Partitions)}] (agentgroup) {};
+\node[envbox, fill=fedblue!5, fit=(agent1)(agent2)(agentN), label={[font=\small\bfseries, text=fedblue!80!black]below:Tier-1: Local PPO Agents (Non-IID Partitions)}] (agentgroup) {};
 \end{scope}
 
-% Agg to Agents connections
-\coordinate (aggmid) at ($(fltrust.south)!0.5!(dynattn.south)+(0,-0.5)$);
-\draw[arrowstyle=fedblue!60, <->] (fltrust.south) -- ++(0,-0.5) -- (aggmid) |- (agent1.north);
-\draw[arrowstyle=fedblue!60, <->] (fedplus.south) -- ++(0,-0.5) -- (aggmid) |- (agent2.north);
-\draw[arrowstyle=fedblue!60, <->] (fedplus.south) -- ++(0,-0.5) -- (aggmid) |- (agent3.north);
-\draw[arrowstyle=fedblue!60, <->] (dynattn.south) -- ++(0,-0.5) -- (aggmid) |- (agentN.north);
+% FLTrust to Agents connections
+\draw[arrowstyle=fedblue!60, <->] (fltrust.south) -- ++(0,-0.5) -| (agent1.north);
+\draw[arrowstyle=fedblue!60, <->] (fltrust.south) -- ++(0,-0.5) -| (agent2.north);
+\draw[arrowstyle=fedblue!60, <->] (fltrust.south) -- ++(0,-0.5) -| (agentN.north);
 
-% === Meta Agent (right side) ===
-\node[metabox, right=2.5cm of server, minimum width=2.8cm] (meta) {Tier-2\\Meta-Agent\\(CNNGRUActor)};
-\draw[arrowstyle=metapurple!70, <->] (server.east) -- (meta.west);
-\draw[dashedarrow=metapurple!50] (meta.south) -- ++(0,-4.5) -| (agentN.east);
+% === RL Client Selector (Tier-2, right side) ===
+\node[serverbox, right=3cm of server, minimum width=2.8cm] (selector) {Tier-2\\RL Client Selector\\(PPO Bernoulli)};
 
-% === Novelty Detector (left side) ===
-\node[novelbox, left=2.5cm of server, minimum width=2.8cm] (novelty) {Novelty\\Detector\\(Autoencoder)};
-\draw[arrowstyle=novelcyan!70, <->] (server.west) -- (novelty.east);
-\draw[dashedarrow=novelcyan!50] (novelty.south) -- ++(0,-4.5) -| (agent1.west);
+% Selector connections
+\draw[arrowstyle=attnorange!70, <->] (server.east) -- (selector.west);
+\draw[dashedarrow=attnorange!50] (selector.south) -- ++(0,-3) -| (agentN.east);
 
 % === Environment boxes below agents ===
 \node[box, fill=ppored!10, draw=ppored!50, below=0.8cm of agent1, font=\scriptsize\bfseries, minimum width=1.8cm] (env1) {IDS Env\\Segment 1};
 \node[box, fill=ppored!10, draw=ppored!50, below=0.8cm of agent2, font=\scriptsize\bfseries, minimum width=1.8cm] (env2) {IDS Env\\Segment 2};
-\node[box, fill=ppored!10, draw=ppored!50, below=0.8cm of agent3, font=\scriptsize\bfseries, minimum width=1.8cm] (env3) {IDS Env\\Segment 3};
 \node[box, fill=ppored!10, draw=ppored!50, below=0.8cm of agentN, font=\scriptsize\bfseries, minimum width=1.8cm] (envN) {IDS Env\\Segment N};
 
 \draw[arrowstyle=ppored!50, <->] (agent1) -- (env1);
 \draw[arrowstyle=ppored!50, <->] (agent2) -- (env2);
-\draw[arrowstyle=ppored!50, <->] (agent3) -- (env3);
 \draw[arrowstyle=ppored!50, <->] (agentN) -- (envN);
 
 % === Legend ===
@@ -251,7 +226,7 @@ The central server coordinates $N$ distributed agents (default $N=10$), each mon
 
 \end{tikzpicture}
 }
-\caption{Overall architecture of FedRL-IDS: Tier-1 (PPO agents with CNNGRUActor backbone), Tier-2 (Meta-Agent coordinator), Tier-3 (Bernoulli client selector). The central server runs the tri-technique aggregation pipeline (FLTrust + Fed+ + Dynamic Attention).}
+\caption{Overall architecture of FedRL-IDS: Tier-1 (PPO agents with CNN-GRU-CBAM backbone), Tier-2 (RL Bernoulli client selector for resource-efficient client selection). The central server runs FLTrust aggregation with temporal reputation for Byzantine-robust model updates.}
 \label{fig:architecture}
 \end{figure*}
 
@@ -369,7 +344,6 @@ R = \underbrace{w \cdot \mathrm{TP\_REWARD} \cdot \mathrm{TP}}_{\text{correct at
 - \underbrace{w \cdot \mathrm{FN\_PENALTY} \cdot \mathrm{FN\_BOOST} \cdot \mathrm{FN}}_{\text{missed attack}}
 + \underbrace{\mathrm{MCC\_COEF} \cdot \mathrm{MCC}}_{\text{MCC bonus}}
 + \delta \cdot (1 - \mathrm{latency})
-+ \varepsilon \cdot \mathrm{novelty\_bonus}
 - \mathrm{collapse\_penalty}
 \end{equation}
 
@@ -381,11 +355,6 @@ where $w$ is the inverse-class-frequency weight for class imbalance handling, an
 \textbf{Why MCC over Accuracy/F1?} With NSL-KDD having 53\% Normal (majority class), predicting all Normal gives 53\% accuracy but 0\% F1 for attacks. F1 is asymmetric across TP/FP/FN/TN. MCC is symmetric over all four cells of the confusion matrix and is the only metric bounded in $[-1, 1]$ where 0 = random and 1 = perfect.
 
 \textbf{Cost-sensitive weighting}: FN penalty is boosted by $\mathrm{FN\_BOOST}=2.0$ because missing an attack (false negative) is more dangerous than a false alarm (false positive) in security-critical IDS.
-
-\textbf{Novelty bonus}: When a sample from an unseen class is correctly detected, the autoencoder reconstruction error exceeds threshold $\tau$:
-\begin{equation}
-r_{\mathrm{nov}} = \min\!\left(\frac{e(x)}{\tau} - 1,\ 1.0\right)
-\end{equation}
 
 \textbf{Collapse penalty}: When a single class exceeds 65\% of all predictions, a penalty proportional to the excess is applied to prevent action collapse.
 
@@ -427,17 +396,6 @@ with $\eta_{\min} = 0.1 \cdot \eta_0$ (actor: $\eta_0=3\times10^{-4}$, critic: $
 \begin{equation}
 \hat{A}_t = \sum_{l=0}^{T-t} (\gamma\lambda)^l \delta_{t+l}, \quad \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t), \quad \lambda = 0.95
 \end{equation}
-
-\subsection{Autoencoder-based Novelty Detection}
-
-An autoencoder is trained on benign/high-confidence traffic from the training set:
-\begin{itemize}
-    \item \textbf{Encoder}: $\mathbb{R}^d \to \mathbb{R}^{\max(64, d/2)} \to \mathbb{R}^{32}$ with ReLU
-    \item \textbf{Decoder}: $\mathbb{R}^{32} \to \mathbb{R}^{\max(64, d/2)} \to \mathbb{R}^d$ (symmetric)
-    \item \textbf{Loss}: MSE reconstruction error
-\end{itemize}
-
-The autoencoder is periodically retrained (every $N$ rounds) using high-confidence ($>0.9$) predictions from the current global model as pseudo-labels, ensuring the novelty boundary adapts to evolving attack patterns.
 
 \subsection{Tri-Technique Federated Aggregation}
 \label{sec:aggregation}

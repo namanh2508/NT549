@@ -98,8 +98,8 @@ class FLTrust:
         """
         self.device = device
         self.trust_floor = trust_floor
-        self.reputation_growth = reputation_growth   # FIX: was 0.05, now 0.1
-        self.reputation_decay = reputation_decay      # FIX: was 0.1, now 0.05
+        self.reputation_growth = reputation_growth
+        self.reputation_decay = reputation_decay
         # Temporal reputation scores (persist across rounds)
         self.reputations = [initial_reputation] * num_agents
 
@@ -175,25 +175,24 @@ class FLTrust:
         # Step 1: ReLU on cosine to get non-negative alignment scores
         alignment = [max(0.0, cs) for cs in cosine_scores]
 
-        # Step 2: Temperature-scaled softmax over alignment scores (Fix 4 / Bug 8)
-        # Temperature τ controls sharpness: low τ = sharper distribution, high τ = uniform
-        # FIX: τ=0.1 was too sharp — when all cosine similarities are small (~0.1),
-        # exp(0.1/0.1) = exp(1) = 2.7 while exp(0.05/0.1) = exp(0.5) = 1.65,
-        # giving only 1.6x differentiation. τ=1.0 (no sharpening) preserves the relative
-        # ordering while still applying softmax. The reputation bonus then provides
-        # additional differentiation on top of the softmax-distributed cosine scores.
-        temperature = 1.0
-        align_t = torch.FloatTensor(alignment)
-        exp_scores = torch.exp(align_t / temperature)
-        cos_weighted = exp_scores / (exp_scores.sum() + 1e-8)
-        cos_weighted = cos_weighted.tolist()
+        # Min-max normalization preserves relative ordering and produces
+        # well-spread trust scores in [0, 1]. Temperature-softmax was removed
+        # because it compressed all scores into a narrow range [0.12, 0.27].
+        min_a = min(alignment) if alignment else 0.0
+        max_a = max(alignment) if alignment else 1.0
+        range_a = max_a - min_a
+        if range_a > 1e-9:
+            cos_weighted = [(a - min_a) / range_a for a in alignment]
+        else:
+            n = len(alignment)
+            cos_weighted = [1.0 / n] * n
 
-        # Step 3: Compute reputation bonus
+        # Step 2: Compute reputation bonus
         # Shift reputation so 0.5 → 0, >0.5 → positive, <0.5 → negative
         beta = 0.2  # reduced from 0.3 — reputation bonus should not dominate cosine distribution
         rep_bonus = [beta * (rep - 0.5) for rep in self.reputations[:len(cos_weighted)]]
 
-        # Step 4: Final raw trust = temperature-scaled cosine + reputation bonus
+        # Step 3: Final raw trust = min-max cosine + reputation bonus
         raw_scores = []
         for i in range(len(cos_weighted)):
             trust = cos_weighted[i] + rep_bonus[i]
@@ -237,15 +236,10 @@ class FLTrust:
         """
         Clip each client update to a maximum L2 norm.
 
-        FIX: Replaces normalise_updates which scaled client updates to match
-        server magnitude — this destroyed PPO network weights because:
-          - V(s) and π(a|s) depend on absolute weight values
-          - Multiplying all weights by an arbitrary scale factor corrupts
-            the Softmax/Sigmoid outputs, causing action collapse
-
-        Instead, we use simple norm clipping: if ||Δ_k|| > max_norm,
-        scale down to max_norm. This bounds the update magnitude without
-        distorting the relative structure of Actor/Critic parameters.
+        Norm clipping bounds update magnitude without distorting the relative
+        structure of Actor/Critic parameters. This replaces magnitude
+        normalisation which corrupted PPO weights by scaling all parameters
+        by an arbitrary factor, destroying softmax/sigmoid outputs.
         """
         clipped = []
         for cu in client_updates:

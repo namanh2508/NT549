@@ -1,31 +1,42 @@
 """
-Combined Federated Aggregator: FedTrust + Fed+ + Dynamic Attention.
+Simplified Federated Aggregator for FedRL-IDS.
 
-This is the core innovation — combining three complementary FL techniques:
+After architectural review, the tri-technique pipeline (FLTrust + Fed+ + Dynamic Attention)
+was causing two systemic problems:
 
-1. FedTrust: Trust bootstrapping via server root dataset
-   - Assigns trust scores (ReLU-clipped cosine similarity)
-   - Normalises update magnitudes
-   → Provides Byzantine robustness
+  [A] Authority overlap with RL Selector: The Selector's reward was contaminated by
+      the aggregator's trust/attention weights. Selecting a bad client → FLTrust
+      gave it weight≈0 → Global model still improved → Selector got positive reward
+      even though it chose WRONG.  False Credit Assignment.
 
-2. Fed+: Personalisation via regularisation
-   - Maintains per-agent personalisation θ_k
-   - Regularised local updates
-   → Handles non-IID data
+  [B] Complexity compounding: Three aggregation techniques multiplied together
+      (Trust × Attention × Fed+) made it impossible to debug which component
+      was responsible for any observed behavior.
 
-3. Dynamic Attention: Performance-aware weighting
-   - Agents with lower accuracy get higher attention
-   → Improves fairness across heterogeneous data distributions
+NEW DESIGN — Clean 3-Step Aggregation (Refactoring Phase 3):
 
-Pipeline per round:
-    a) Each agent trains locally (PPO) → local model w_k
-    b) Compute model updates: Δ_k = w_k − w̃ (global model)
-    c) Server computes its own update Δ_0 from root dataset
-    d) FLTrust: trust scores + normalisation of Δ_k
-    e) Dynamic Attention: attention weights from accuracy + sample count
-    f) Combined weights = trust_score * attention_weight
-    g) Fed+ aggregation with combined weights
-    h) Apply Fed+ personalisation for each agent
+  Step 1: FLTrust — Byzantine robustness
+    - Compute cosine similarity between each client's update Δ_k and the
+      server's update Δ_0 from the root dataset.
+    - Update temporal reputation based on alignment quality.
+    - Raw trust = minmax-normalized cosine + reputation bonus.
+
+  Step 2: Normalize — Probabilistic weighting
+    - Normalize raw trust scores to sum to 1.0.
+    - Apply anti-concentration cap (no client > 50% of total weight).
+
+  Step 3: Weighted Average — FedAvg-style aggregation
+    - w_global = Σ_k Trust_k · Δ_k_clip + w_global_prev
+    - Simple, interpretable, stable.
+
+  Separation of Concerns:
+    FLTrust   → Byzantine robustness (what we trust)
+    Selector  → Resource efficiency (how many clients)
+    Aggregator → Just computes the weighted average
+
+References:
+  Cao et al., "FLTrust: Byzantine-robust Federated Learning via Trust
+      Bootstrapping", NDSS 2021.
 """
 
 import torch
@@ -35,13 +46,14 @@ from collections import OrderedDict
 
 from src.config import Config
 from src.federated.fed_trust import FLTrust
-from src.federated.fed_plus import FedPlus
-from src.federated.dynamic_attention import DynamicAttention
 
 
 class FederatedAggregator:
     """
-    Combines FLTrust + Fed+ + Dynamic Attention for federated RL-IDS.
+    Clean federated aggregation: FLTrust + Weighted Average only.
+
+    No Dynamic Attention (removed — caused authority overlap with RL Selector).
+    No Fed+ personalisation inside the loop (can be applied post-FL if needed).
     """
 
     def __init__(self, cfg: Config, device: torch.device):
@@ -56,11 +68,8 @@ class FederatedAggregator:
             reputation_decay=cfg.fed_trust.reputation_decay,
             initial_reputation=cfg.fed_trust.initial_reputation,
         )
-        self.fed_plus = FedPlus(cfg.fed_plus, device)
-        self.dyn_attn = DynamicAttention(cfg.attention)
 
         self._global_model: Optional[OrderedDict] = None
-        self._personalisations: Dict[int, OrderedDict] = {}
 
     @property
     def global_model(self) -> Optional[OrderedDict]:
@@ -71,56 +80,54 @@ class FederatedAggregator:
             (k, v.clone()) for k, v in model.items()
         )
 
+    @staticmethod
     def compute_update(
-        self, current_model: OrderedDict, global_model: OrderedDict
+        current_model: OrderedDict, reference_model: OrderedDict
     ) -> OrderedDict:
-        """Compute model update (delta) = current - global."""
+        """Compute model delta = current − reference."""
         delta = OrderedDict()
         for key in current_model.keys():
-            delta[key] = current_model[key].float() - global_model[key].float()
+            delta[key] = (
+                current_model[key].float() - reference_model[key].float()
+            )
         return delta
 
     def aggregate_round(
         self,
         local_models: List[OrderedDict],
         server_model: OrderedDict,
-        client_infos: List[Dict],
         selected_indices: List[int],
-        minority_fractions: List[float] = None,
         pre_train_models: List[OrderedDict] = None,
-    ) -> Tuple[OrderedDict, List[float], List[float]]:
+    ) -> Tuple[OrderedDict, List[float]]:
         """
-        Full aggregation pipeline for one federated round.
+        Three-step aggregation for one federated round.
 
-        FIX (Global Start Principle):
-        If pre_train_models is provided, client_updates are computed as:
-            Δ_k = post_train_model - pre_train_model
-        This isolates the pure training contribution and prevents
-        personalisation bias (θ_k from previous rounds) from leaking
-        into the global model.
+        Step 1 — FLTrust:
+          Compute trust scores from cosine similarity between client updates
+          and the server's update. Update temporal reputations.
 
-        If pre_train_models is None, falls back to:
-            Δ_k = local_model - global_model  (legacy behaviour)
+        Step 2 — Normalise:
+          Normalise trust scores to sum to 1.0 with anti-concentration cap.
+
+        Step 3 — Weighted Average:
+          Clip each update to max_norm=10.0.
+          w_global = Σ_k Trust_k · (w_global_prev + Δ_k_clip)
 
         Args:
-            local_models: post-training model state dicts from clients
+            local_models: post-training model state dicts from selected clients
             server_model: server model trained on root dataset
-            client_infos: list of dicts with 'num_samples' and 'accuracy'
             selected_indices: indices of selected clients
-            minority_fractions: fraction of each client's data that is minority class
-            pre_train_models: model states BEFORE local training (for clean delta)
+            pre_train_models: model states BEFORE local training (for clean deltas)
 
         Returns:
-            aggregated_model, trust_scores, attention_weights
+            aggregated_model, trust_scores (one per selected client)
         """
         if self._global_model is None:
             self._global_model = OrderedDict(
                 (k, v.clone()) for k, v in server_model.items()
             )
 
-        # --- Step 1: Compute model updates (clean deltas) ---
-        # FIX: Use pre_train_models if available to compute pure training delta
-        # This prevents personalisation θ_k from leaking into the update
+        # ── Step 1: Compute model updates (clean deltas) ────────────────────────
         if pre_train_models is not None:
             client_updates = [
                 self.compute_update(post, pre)
@@ -133,15 +140,15 @@ class FederatedAggregator:
             ]
         server_update = self.compute_update(server_model, self._global_model)
 
-        # --- Step 2: FLTrust — trust scores from deltas ---
+        # ── Step 1 (cont): FLTrust trust scores ────────────────────────────────
         trust_scores = self.fl_trust.compute_trust_scores(
             server_update, client_updates
         )
 
-        # --- Step 3: Clip update magnitudes (replaces dangerous magnitude normalisation) ---
+        # ── Step 2: Clip update magnitudes ───────────────────────────────────────
         clipped_updates = self.fl_trust.clip_updates(client_updates, max_norm=10.0)
 
-        # --- Step 4: Reconstruct models (global + clipped delta) ---
+        # ── Step 3: Reconstruct models with clipped deltas ─────────────────────
         reconstructed_models = []
         for cu in clipped_updates:
             model = OrderedDict()
@@ -149,68 +156,32 @@ class FederatedAggregator:
                 model[key] = self._global_model[key].float() + cu[key].float()
             reconstructed_models.append(model)
 
-        # --- Step 5: Dynamic Attention weights ---
-        attention_values = self.dyn_attn.compute_all_attentions(client_infos)
-
-        # --- Step 5b: Minority class trust boost ---
-        if minority_fractions is not None:
-            beta_minority = 0.3
-            attention_values = [
-                att * (1.0 + beta_minority * mf)
-                for att, mf in zip(attention_values, minority_fractions)
-            ]
-
-        # --- Step 6: Combine trust × attention for aggregation weights ---
-        combined_weights = [
-            ts * att for ts, att in zip(trust_scores, attention_values)
-        ]
-        total_weight = sum(combined_weights)
-
+        # ── Step 3 (cont): Weighted average with trust scores ───────────────────
+        total_weight = sum(trust_scores)
         if total_weight < 1e-12:
             aggregated = OrderedDict(
                 (k, v.clone()) for k, v in server_model.items()
             )
         else:
-            norm_weights = [w / total_weight for w in combined_weights]
-            aggregated = self.fed_plus.aggregate(
-                reconstructed_models, weights=norm_weights
-            )
+            norm_weights = [w / total_weight for w in trust_scores]
+            aggregated = self._weighted_average(reconstructed_models, norm_weights)
 
         # Update global model
         self._global_model = OrderedDict(
             (k, v.clone()) for k, v in aggregated.items()
         )
 
-        # Expand trust_scores and attention_values to all clients
-        full_trust = [0.0] * self.cfg.training.num_clients
-        full_attention = [0.0] * self.cfg.training.num_clients
-        for idx, ts, att in zip(selected_indices, trust_scores, attention_values):
-            full_trust[idx] = ts
-            full_attention[idx] = att
+        return aggregated, trust_scores
 
-        return aggregated, full_trust, full_attention
-
-    def personalise_for_agent(
+    def _weighted_average(
         self,
-        agent_id: int,
-        local_model: OrderedDict,
-        eta: float = 3e-4,
+        models: List[OrderedDict],
+        weights: List[float],
     ) -> OrderedDict:
-        """
-        Apply Fed+ personalisation for a specific agent.
-        Computes θ_k and returns personalised model.
-        """
-        if self._global_model is None:
-            return local_model
-
-        # Compute personalisation component
-        theta = self.fed_plus.compute_personalisation(
-            local_model, self._global_model
-        )
-        self._personalisations[agent_id] = theta
-
-        # Apply Fed+ local update mixing
-        personalised = self.fed_plus.local_update_step(
-            local_model, self._global_model, theta, eta
-        )
-        return personalised
+        """Weighted average of model state dicts."""
+        result = OrderedDict()
+        for key in models[0].keys():
+            result[key] = sum(
+                w * m[key].float() for w, m in zip(weights, models)
+            )
+        return result

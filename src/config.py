@@ -10,6 +10,85 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATASET_DIR = os.path.join(BASE_DIR, "Dataset")
 
 
+# ─── Universal Taxonomy (3-class) ───────────────────────────────────────────
+# Maps all datasets to a common 3-class taxonomy for unified IDS model.
+# This enables a single model to detect attacks across different network environments
+# without dataset-specific classification heads.
+UNIVERSAL_TAXONOMY = {
+    "Benign": 0,
+    "Attack": 1,
+    "Recon": 2,
+}
+UNIVERSAL_CLASS_NAMES = ["Benign", "Attack", "Recon"]
+
+# Maps from original attack categories → universal taxonomy
+# Format: {dataset_name: {original_label: universal_label}}
+UNIVERSAL_ATTACK_MAPS = {
+    "edge_iiot": {
+        "Benign Traffic": "Benign",
+        "DDoS HTTP Flood": "Attack",
+        "DDoS TCP SYN Flood": "Attack",
+        "Backdoor": "Attack",
+        "Ransomware": "Attack",
+        "OS Fingerprinting": "Recon",
+        "Port Scanning": "Recon",
+        "Vulnerability Scanner": "Recon",
+        "Password Attack": "Attack",
+        "SQL Injection": "Attack",
+        "Uploading Attack": "Attack",
+        "XSS": "Attack",
+        "DDoS UDP Flood": "Attack",
+        "DDoS ICMP Flood": "Attack",
+        "DoS ICMP Flood": "Attack",
+        "DoS TCP Flood": "Attack",
+        "DoS UDP Flood": "Attack",
+        "MITM ARP Spoofing": "Attack",
+        "MQTT DDoS Publish Flood": "Attack",
+        "MQTT DoS Connect Flood": "Attack",
+        "MQTT DoS Publish Flood": "Attack",
+        "MQTT Malformed": "Attack",
+        "Recon OS Scan": "Recon",
+        "Recon Ping Sweep": "Recon",
+        "Recon Port Scan": "Recon",
+        "Recon Vulnerability Scan": "Recon",
+        "Unknown": "Attack",
+    },
+    "nsl_kdd": {
+        "Benign": "Benign",
+        "DoS": "Attack",
+        "Probe": "Recon",
+        "R2L": "Attack",
+        "U2R": "Attack",
+        "Unknown": "Attack",
+    },
+    "iomt_2024": {
+        "Benign": "Benign",
+        "DDoS ICMP Flood": "Attack",
+        "DDoS UDP Flood": "Attack",
+        "DoS ICMP Flood": "Attack",
+        "DoS TCP Flood": "Attack",
+        "DoS UDP Flood": "Attack",
+        "MITM": "Attack",
+        "MQTT_Attack": "Attack",
+        "Recon": "Recon",
+        "Unknown": "Attack",
+    },
+    "unsw_nb15": {
+        "Benign": "Benign",
+        "Generic": "Attack",
+        "Exploits": "Attack",
+        "Fuzzers": "Attack",
+        "DoS": "Attack",
+        "Reconnaissance": "Recon",
+        "Analysis": "Attack",
+        "Backdoor": "Attack",
+        "Shellcode": "Attack",
+        "Worms": "Attack",
+        "Unknown": "Attack",
+    },
+}
+
+
 # ─── NSL-KDD column names ───
 NSL_KDD_COLUMNS = [
     "duration", "protocol_type", "service", "flag",
@@ -91,21 +170,16 @@ EDGE_IIOT_DROP_COLS = ["Flow ID", "Src IP", "Dst IP", "Timestamp", "Attack Name"
 
 @dataclass
 class RewardConfig:
-    """Reward function coefficients.
+    """Reward function coefficients for the multi-class IDS environment.
 
-    Binary (IDSEnvironment):
-        R(t) = alpha*TP - beta*FP - gamma*FN + delta*(1-latency) + epsilon*novelty
-
-    Multi-class (MultiClassIDSEnvironment) additionally uses:
-        tp_reward, tn_reward, fp_penalty, fn_penalty, balance_coef,
-        entropy_coef, hhi_coef, collapse_thr, collapse_pen, macro_f1_coef,
-        class_weight_cap, adaptive_cap, focal_gamma
+    R(t) = TP_REWARD·TP − FP_PENALTY·FP − FN_PENALTY·FN_BOOST·FN
+           + MCC_COEF·MCC + delta·(1 − latency) − collapse_penalty
     """
     alpha: float = 1.0     # TP reward (binary env)
     beta: float = 0.8      # FP penalty (binary env)
     gamma: float = 0.8     # FN penalty (binary env)
     delta: float = 0.3     # latency bonus
-    epsilon: float = 0.5   # novelty bonus for detecting unseen patterns
+    epsilon: float = 0.0   # unused — novelty bonus removed (autoencoder removed)
 
     # Multi-class reward parameters (MultiClassIDSEnvironment)
     tp_reward: float = 3.0          # reward for correct attack detection
@@ -133,7 +207,7 @@ class NetworkConfig:
     hidden_dim: int = 128
     num_layers: int = 2
     dropout: float = 0.15
-    dataset: str = "edge_iiot"    # edge_iiot | nsl_kdd | iomt_2024
+    dataset: str = "edge_iiot"    # edge_iiot | nsl_kdd | iomt_2024 | unsw_nb15 | unified
 
 
 @dataclass
@@ -180,18 +254,6 @@ class FedTrustConfig:
 
 
 @dataclass
-class FedPlusConfig:
-    """Fed+ parameters."""
-    sigma: float = 0.01        # penalty constant
-    delta: float = 0.1         # smoothing approximation
-    kappa_range: tuple = (0.9, 0.999)
-    lambda_init: float = 0.0   # local initialization (Fed+ default)
-    psi_type: str = "l2"       # "l2" -> FedAvg+, "geomed" -> FedGeoMed+
-
-
-@dataclass
-class DynamicAttentionConfig:
-    """Dynamic attention mechanism parameters.
 
     FIX (D): Replaced accuracy-based multiplier with loss-based multiplier.
 
@@ -229,28 +291,19 @@ class TrainingConfig:
     save_interval: int = 20
     device: str = "cuda"            # or "cpu"
     seed: int = 42
-    dataset: str = "edge_iiot"     # "edge_iiot", "nsl_kdd", "iomt_2024", or "unsw_nb15"
+    dataset: str = "edge_iiot"     # "edge_iiot", "nsl_kdd", "iomt_2024", "unsw_nb15", or "unified"
     sample_limit_per_file: int = 50000   # limit large CSV files
     test_ratio: float = 0.2
     output_dir: str = os.path.join(BASE_DIR, "outputs")
 
-    # tier-2 meta-agent
-    meta_agent_enabled: bool = True
-    meta_agent_eval_interval: int = 1  # rounds between meta-agent evaluations (1=every round for debugging)
-    meta_hidden_dim: int = 128
-
-    # tier-3 RL-based client selection
+    # RL-based client selection
     client_selection_enabled: bool = True
-    clients_per_round: int = 8          # K in RL-AUDPS; None = select all
+    clients_per_round: int = 8          # K_sel: number of clients selected per round
     selector_hidden_dim: int = 128
-    selector_eval_interval: int = 1    # update selector every N rounds (1=every round)
-
-    # Novelty detection
-    novelty_threshold: float = 0.95   # reconstruction error percentile (0.95 = 95th pct)
-    novelty_retrain_interval: int = 50  # retrain autoencoder every N rounds (0 = disabled)
+    selector_eval_interval: int = 1    # update selector every N rounds
 
     # Multi-seed sweep
-    seeds: List[int] = field(default_factory=lambda: [42, 123, 777])  # multiple runs for statistical rigor
+    seeds: List[int] = field(default_factory=lambda: [42, 123, 777])
 
 
 @dataclass
@@ -259,6 +312,4 @@ class Config:
     ppo: PPOConfig = field(default_factory=PPOConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     fed_trust: FedTrustConfig = field(default_factory=FedTrustConfig)
-    fed_plus: FedPlusConfig = field(default_factory=FedPlusConfig)
-    attention: DynamicAttentionConfig = field(default_factory=DynamicAttentionConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)

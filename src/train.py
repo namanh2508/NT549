@@ -1,32 +1,3 @@
-"""
-Main training pipeline for Federated RL-based IDS.
-
-Architecture:
-    ┌─────────────────────────────────────────────────────────┐
-    │                    Central Server                        │
-    │  ┌─────────┐  ┌──────────┐  ┌──────────────────────┐   │
-    │  │ FLTrust │  │  Fed+    │  │ Dynamic Attention     │   │
-    │  │ (trust  │  │ (person- │  │ (performance-aware    │   │
-    │  │  scores)│  │  alise)  │  │  weighting)           │   │
-    │  └────┬────┘  └────┬─────┘  └──────────┬───────────┘   │
-    │       └────────────┴───────────────────┘                │
-    │                    │                                     │
-    │              Aggregated Model                           │
-    │            ┌───────┴────────┐                           │
-    │            │  Meta-Agent    │ ← Tier 2                  │
-    │            │  (coordinator) │                           │
-    │            └───────┬────────┘                           │
-    └────────────────────┼────────────────────────────────────┘
-                         │
-         ┌───────────────┼───────────────┐
-         │               │               │
-    ┌────┴────┐    ┌────┴────┐    ┌────┴────┐
-    │Client 0 │    │Client 1 │    │Client N │  ← Tier 1
-    │  (PPO)  │    │  (PPO)  │    │  (PPO)  │
-    │ Local   │    │ Local   │    │ Local   │
-    │ Data    │    │ Data    │    │ Data    │
-    └─────────┘    └─────────┘    └─────────┘
-"""
 
 import os
 import json
@@ -43,103 +14,15 @@ from src.data.preprocessor import (
     create_root_dataset,
 )
 from src.agents.local_client import LocalClient
-from src.agents.meta_agent import MetaAgent
 from src.agents.ppo_agent import PPOAgent
 from src.federated.aggregator import FederatedAggregator
-from src.federated.client_selector import RLClientSelector, compute_model_divergence, compute_gradient_alignment
+from src.federated.client_selector import RLClientSelector, compute_gradient_alignment, compute_model_divergence
 from src.environment.ids_env import MultiClassIDSEnvironment
-from src.models.networks import NoveltyDetector
 from src.utils.metrics import (
     compute_binary_metrics,
     compute_multiclass_metrics,
     print_metrics,
 )
-
-
-def retrain_novelty_detector(
-    novelty_detector: torch.nn.Module,
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    aggregated_model: OrderedDict,
-    X_test: np.ndarray,
-    y_test: np.ndarray,
-    num_classes: int,
-    cfg: Config,
-    device: torch.device,
-) -> Tuple[float, float]:
-    """
-    Retrain the novelty detector autoencoder using high-confidence samples
-    from the current global model.
-
-    FIX (F): The novelty detector was trained once at round 0 and never updated,
-    making it static and unable to adapt to evolving attack patterns. This function
-    retrains the autoencoder periodically using samples the current model predicts
-    with high confidence as "known" (normal) traffic.
-
-    The retraining uses confident predictions as pseudo-labels to select only
-    samples the model has already learned well, ensuring the autoencoder
-    learns an up-to-date boundary for "known" traffic.
-
-    Returns (novelty_threshold, confidence_threshold) for adaptive thresholding.
-    """
-    eval_agent = PPOAgent(
-        state_dim=X_train.shape[1],
-        action_dim=num_classes,
-        cfg=cfg.ppo,
-        device=device,
-        dataset=cfg.training.dataset,
-    )
-    eval_agent.set_model_state(aggregated_model)
-
-    # Get prediction confidences on training data
-    all_confs = []
-    batch_size = 2048
-    with torch.no_grad():
-        for start in range(0, len(X_train), batch_size):
-            batch = torch.FloatTensor(X_train[start:start + batch_size]).to(device)
-            logits = eval_agent.actor(batch)  # [batch, num_classes]
-            probs = torch.softmax(logits, dim=-1)
-            conf, _ = probs.max(dim=-1)  # max probability per sample
-            all_confs.append(conf.cpu().numpy())
-    all_confs = np.concatenate(all_confs)
-
-    # Select high-confidence samples (model is confident these are "known")
-    CONF_THRESHOLD = 0.9
-    confident_mask = all_confs >= CONF_THRESHOLD
-    n_confident = confident_mask.sum()
-    if n_confident < 100:
-        # Not enough confident samples; keep existing threshold
-        return None, None
-
-    X_confident = X_train[confident_mask]
-    print(f"    Novelty retrain: {n_confident}/{len(X_train)} high-confidence samples (conf>={CONF_THRESHOLD})")
-
-    # Retrain autoencoder on high-confidence subset
-    novelty_detector.train()
-    nd_optim = torch.optim.Adam(novelty_detector.parameters(), lr=1e-3)
-    batch_size_nd = 1024
-    for nd_epoch in range(10):  # quick retrain (10 epochs vs original 20)
-        perm = np.random.permutation(len(X_confident))
-        for start in range(0, len(X_confident), batch_size_nd):
-            idx = perm[start:start + batch_size_nd]
-            batch = torch.FloatTensor(X_confident[idx]).to(device)
-            recon = novelty_detector(batch)
-            loss = ((batch - recon) ** 2).mean()
-            nd_optim.zero_grad()
-            loss.backward()
-            nd_optim.step()
-
-    # Recompute threshold from high-confidence training errors
-    novelty_detector.eval()
-    all_errors = []
-    with torch.no_grad():
-        for start in range(0, len(X_confident), batch_size):
-            batch = torch.FloatTensor(X_confident[start:start + batch_size]).to(device)
-            errs = novelty_detector.reconstruction_error(batch).cpu().numpy()
-            all_errors.append(errs)
-    all_errors = np.concatenate(all_errors)
-    new_thresh = float(np.percentile(all_errors, cfg.training.novelty_threshold * 100))
-    return new_thresh, CONF_THRESHOLD
 
 
 def train_server_model(
@@ -199,102 +82,23 @@ def evaluate_global_model(
         y_pred.append(int(action_idx))
 
     y_pred = np.array(y_pred)
-    binary_metrics = compute_binary_metrics(y_test, y_pred)
+
+    #  Use ONLY multi-class metrics for multi-class IDS.
+    # Previously this returned {**binary_metrics, **multi_metrics} which caused
+    # "recall == accuracy" because binary recall = TP/(TP+FN) = accuracy only when
+    # num_classes=1 or specific class distributions. For multi-class, binary recall
+    # is fundamentally different from multiclass weighted recall.
+    # We now return only multi-class metrics and explicitly compute FPR separately
+    # using a binary binarisation (Benign=0, Attack=1).
     multi_metrics = compute_multiclass_metrics(y_test, y_pred)
 
-    return {**binary_metrics, **multi_metrics}
+    # Compute binary FPR separately: benign samples (class 0) flagged as attack
+    y_test_bin = (y_test != 0).astype(int)
+    y_pred_bin = (y_pred != 0).astype(int)
+    binary_fpr = compute_binary_metrics(y_test_bin, y_pred_bin)["fpr"]
 
-
-def evaluate_with_meta_agent(
-    aggregated_model: OrderedDict,
-    local_clients: list,
-    X_test: np.ndarray,
-    y_test: np.ndarray,
-    num_classes: int,
-    cfg: Config,
-    device: torch.device,
-    meta_agent,
-) -> Dict:
-    """
-    Evaluate using the meta-agent to coordinate local agent decisions.
-
-    The meta-agent (Tier-2) observes the actions from all Tier-1 local agents
-    and produces a refined final decision. This provides a comparison between
-    the standard aggregated model and the meta-agent-coordinated approach.
-
-    FIX (B): Properly integrates meta-agent output into evaluation so its
-    contribution can be measured and validated.
-    """
-    eval_agent = PPOAgent(
-        state_dim=X_test.shape[1],
-        action_dim=num_classes,
-        cfg=cfg.ppo,
-        device=device,
-        dataset=cfg.training.dataset,
-    )
-    eval_agent.set_model_state(aggregated_model)
-
-    y_pred_meta = []
-    y_pred_base = []
-
-    for i in range(len(X_test)):
-        state = X_test[i].astype(np.float32)
-
-        # Base evaluation: use aggregated model directly (no meta-agent)
-        action_idx, _, _ = eval_agent.select_action(state, deterministic=True)
-        y_pred_base.append(int(action_idx))
-
-        # Meta-agent evaluation: collect all local agent actions, then meta-agent decides
-        all_action_vectors = []
-        for client in local_clients:
-            action_idx, _, _ = client.ppo.select_action(state, deterministic=True)
-            # action_idx is a class index (int). Convert to one-hot for meta-agent input.
-            one_hot = np.zeros(num_classes, dtype=np.float32)
-            one_hot[int(action_idx)] = 1.0
-            all_action_vectors.append(one_hot)
-
-        agent_actions = np.stack(all_action_vectors)  # [num_clients, num_classes]
-        meta_action_idx = meta_agent.predict_class(
-            agent_actions, state, deterministic=True
-        )
-        y_pred_meta.append(int(meta_action_idx))
-
-    y_pred_meta = np.array(y_pred_meta)
-    y_pred_base = np.array(y_pred_base)
-
-    meta_binary = compute_binary_metrics(y_test, y_pred_meta)
-    meta_multi = compute_multiclass_metrics(y_test, y_pred_meta)
-    base_binary = compute_binary_metrics(y_test, y_pred_base)
-    base_multi = compute_multiclass_metrics(y_test, y_pred_base)
-
-    def _safe_metric(metrics: Dict, key: str, default: float = 0.0) -> float:
-        """Safely extract a metric with fallback, logging a warning if missing."""
-        # Try both unprefixed and _weighted suffixed keys
-        val = metrics.get(key)
-        if val is not None:
-            return val
-        val_weighted = metrics.get(f"{key}_weighted")
-        if val_weighted is not None:
-            return val_weighted
-        import warnings
-        warnings.warn(f"[evaluate_with_meta_agent] Metric '{key}' not found in "
-                      f"metrics dict. Keys present: {list(metrics.keys())}. "
-                      f"Returning default={default}. This may indicate a metrics "
-                      f"API mismatch.")
-        return default
-
-    return {
-        "meta_accuracy": meta_binary["accuracy"],
-        "meta_precision": _safe_metric(meta_multi, "precision"),
-        "meta_recall": _safe_metric(meta_multi, "recall"),
-        "meta_f1": _safe_metric(meta_multi, "f1_score"),
-        "meta_fpr": meta_binary["fpr"],
-        "base_accuracy": base_binary["accuracy"],
-        "base_precision": _safe_metric(base_multi, "precision"),
-        "base_recall": _safe_metric(base_multi, "recall"),
-        "base_f1": _safe_metric(base_multi, "f1_score"),
-        "base_fpr": base_binary["fpr"],
-    }
+    result = {**multi_metrics, "fpr": binary_fpr}
+    return result
 
 
 def save_checkpoint(
@@ -307,7 +111,6 @@ def save_checkpoint(
     history: Dict,
     best_accuracy: float,
     lr_states: Optional[Dict] = None,
-    meta_agent_state: Optional[OrderedDict] = None,
     selector_state: Optional[OrderedDict] = None,
 ):
     """Save a full training checkpoint so training can be resumed."""
@@ -322,8 +125,6 @@ def save_checkpoint(
     }
     if lr_states is not None:
         ckpt["lr_states"] = lr_states
-    if meta_agent_state is not None:
-        ckpt["meta_agent_state"] = meta_agent_state
     if selector_state is not None:
         ckpt["selector_state"] = selector_state
     torch.save(ckpt, filepath)
@@ -335,9 +136,13 @@ def load_checkpoint(filepath: str) -> Dict:
 
 
 def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
-    """Main federated RL training loop."""
+    """Main federated RL training loop.
+
+    Architecture: CNN-GRU-CBAM + PPO (Tier-1) + RL Selector (Tier-3) + FLTrust.
+    Removed: Meta-Agent, Novelty Detector, Dynamic Attention.
+    """
     print("=" * 70)
-    print("  Federated RL-IDS: PPO + FedTrust + Fed+ + Dynamic Attention")
+    print("  FedRL-IDS: PPO + FLTrust + RL Client Selector (Resource Efficiency)")
     print("=" * 70)
 
     # Setup
@@ -368,11 +173,6 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
     adaptive_entropy = base_entropy * max(1.0, num_classes / 3.0)
     cfg.ppo.entropy_coef = min(adaptive_entropy, 0.1)  # cap at 0.1
     print(f"  Adaptive entropy coef: {cfg.ppo.entropy_coef:.4f} (num_classes={num_classes})")
-
-    # Periodic novelty retraining interval (FIX F: make it non-static)
-    novelty_retrain_interval = getattr(cfg.training, "novelty_retrain_interval", 50)
-    if novelty_retrain_interval > 0:
-        print(f"  Novelty detector retraining every {novelty_retrain_interval} rounds")
 
     # ── Create root dataset for FLTrust ──
     print("[2/5] Creating root dataset & partitioning data...")
@@ -425,23 +225,12 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
     # Federated aggregator
     aggregator = FederatedAggregator(cfg, device)
 
-    # Meta-agent (Tier 2)
-    meta_agent = None
-    if cfg.training.meta_agent_enabled:
-        meta_agent = MetaAgent(
-            num_agents=cfg.training.num_clients,
-            action_dim=action_dim,
-            state_dim=state_dim,
-            cfg=cfg,
-            device=device,
-        )
-
     # RL-based Client Selector (Tier 3)
     client_selector = None
     if cfg.training.client_selection_enabled:
         client_selector = RLClientSelector(
             num_clients=cfg.training.num_clients,
-            state_dim_per_client=8,     # +gradient_alignment + minority_class_fraction
+            state_dim_per_client=7,   # 7 features: trust, loss, divergence, grad alignment, F1, data share, minority
             hidden_dim=cfg.training.selector_hidden_dim,
             cfg=cfg.ppo,
             device=device,
@@ -487,14 +276,11 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
         "precision": [],
         "recall": [],
         "f1": [],
-        "f1_macro": [],          # Task 6: macro F1 (equal-weight per class)
+        "f1_macro": [],
         "fpr": [],
         "trust_scores": [],
-        "attention_values": [],
         "client_accuracies": [],
         "selected_clients": [],
-        "meta_agent_accuracy": [],
-        "meta_agent_f1": [],
     }
 
     if resume_checkpoint and os.path.exists(resume_checkpoint):
@@ -519,10 +305,6 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
         # Restore reputations
         aggregator.fl_trust.reputations = ckpt["reputations"]
 
-        # Restore meta-agent state if present in checkpoint
-        if "meta_agent_state" in ckpt and meta_agent is not None:
-            meta_agent.set_state(ckpt["meta_agent_state"])
-
         # Restore client selector state if present in checkpoint
         if "selector_state" in ckpt and client_selector is not None:
             client_selector.set_state(to_device(ckpt["selector_state"], device))
@@ -540,42 +322,6 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
 
         print(f"  Resumed at round {start_round}/{cfg.training.num_rounds}, best_acc={best_accuracy:.4f}")
 
-    # ── Train novelty detector (autoencoder on known traffic) ──
-    print("  Training novelty detector (autoencoder)...")
-    novelty_detector = NoveltyDetector(input_dim=state_dim, latent_dim=32).to(device)
-    nd_optim = torch.optim.Adam(novelty_detector.parameters(), lr=1e-3)
-    nd_batch_size = 2048
-    for nd_epoch in range(20):
-        perm = np.random.permutation(len(X_train))
-        for nd_start in range(0, min(len(X_train), nd_batch_size * 4), nd_batch_size):
-            nd_idx = perm[nd_start:nd_start + nd_batch_size]
-            batch = torch.FloatTensor(X_train[nd_idx]).to(device)
-            recon = novelty_detector(batch)
-            nd_loss = ((batch - recon) ** 2).mean()
-            nd_optim.zero_grad()
-            nd_loss.backward()
-            nd_optim.step()
-
-    # Compute threshold at configured percentile of training errors (batched)
-    novelty_detector.eval()
-    all_errors_list = []
-    with torch.no_grad():
-        for nd_start in range(0, len(X_train), nd_batch_size):
-            batch = torch.FloatTensor(X_train[nd_start:nd_start + nd_batch_size]).to(device)
-            errs = novelty_detector.reconstruction_error(batch).cpu().numpy()
-            all_errors_list.append(errs)
-    all_errors = np.concatenate(all_errors_list)
-    novelty_thresh = float(np.percentile(all_errors, cfg.training.novelty_threshold * 100))
-    print(f"  Novelty threshold (p{cfg.training.novelty_threshold*100:.0f}): {novelty_thresh:.6f}")
-
-    # Inject novelty detector into agent environments (on CPU for env inference)
-    novelty_detector_cpu = novelty_detector.cpu()
-    for client in local_clients:
-        client.env._novelty_detector = novelty_detector_cpu
-        client.env._novelty_threshold = novelty_thresh
-        client.test_env._novelty_detector = novelty_detector_cpu
-        client.test_env._novelty_threshold = novelty_thresh
-
     # ── Training loop ──
     # Auto-adjust eval interval for short runs
     eval_interval = cfg.training.eval_interval
@@ -591,9 +337,7 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
         "accuracy": 0.0, "precision": 0.0, "recall": 0.0,
         "f1_score": 0.0, "f1_macro": 0.0, "fpr": 0.0,
     }
-    meta_eval = None
-    # Bug 4 fix: persist previous-round losses so selector always has real losses
-    # (not 0.0 placeholders) for the state features at Step 0.
+    # Persist previous-round losses for selector state features
     prev_round_losses: List[float] = [0.0] * cfg.training.num_clients
 
     for round_idx in range(start_round, cfg.training.num_rounds):
@@ -619,7 +363,6 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
             ]
 
             # Use previous-round divergences and gradient alignments (stale, as designed)
-            # These are available from the previous round's end state
             prev_divergences = getattr(client_selector, '_prev_divergences', None)
             prev_gradient_aligns = getattr(client_selector, '_prev_gradient_alignments', None)
             if prev_divergences is None:
@@ -627,20 +370,14 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
             if prev_gradient_aligns is None:
                 prev_gradient_aligns = [0.0] * cfg.training.num_clients
 
-            # Attention from previous round (proxy for trust × attention signal)
-            prev_attention = history["attention_values"][-1] if history["attention_values"] else \
-                             [1.0 / cfg.training.num_clients] * cfg.training.num_clients
-
-            selected_indices = client_selector.select_clients(
+            selected_indices, bernoulli_probs = client_selector.select_clients(
                 reputations=reputations,
-                attention_weights=prev_attention,
-                client_losses=prev_round_losses,  # Bug 4 fix: use previous round's real losses
+                client_losses=prev_round_losses,
                 model_divergences=prev_divergences,
                 gradient_alignments=prev_gradient_aligns,
                 data_shares=data_shares,
-                deterministic=(round_idx % cfg.training.selector_eval_interval != 0),
                 k_sel=k_sel,
-                minority_fractions=[c.minority_class_fraction for c in local_clients],  # Task 3 Option A
+                minority_fractions=[c.minority_class_fraction for c in local_clients],
             )
         else:
             selected_indices = list(range(cfg.training.num_clients))
@@ -649,7 +386,7 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
         selected_local_models = [client.get_model_state() for client in selected_clients]
 
         # ── Step A: Local training (Tier 1) — selected clients only ──────────
-        # FIX (Global Start): Save pre-train snapshots BEFORE local training.
+        #  Save pre-train snapshots BEFORE local training.
         # This ensures delta = post_train - pre_train is a pure training update,
         # not contaminated by personalisation offsets from previous rounds.
         pre_train_models = [client.get_model_state() for client in selected_clients]
@@ -680,73 +417,45 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
 
         # Compute gradient alignments for ALL clients (for selector state)
         # g_k = cos(Δ_k, Δ_glob): measures alignment with global gradient direction
-        # Bug 5 fix: compute explicit deltas = post_train - pre_train so cosine
-        # similarity measures gradient alignment, not raw model magnitude.
-        # For unselected clients (no training), use zero delta.
+        # For unselected clients: 0.0 (neutral alignment)
         all_gradient_alignments = []
         # Build post/pre model dicts for selected clients
         selected_posts = {i: client.get_model_state() for i, client in zip(selected_indices, selected_clients)}
         selected_pres = {i: pre for i, pre in zip(selected_indices, pre_train_models)}
-        # Server delta
+        # Server delta — only compute alignment if server model actually changed
         server_delta = aggregator.compute_update(server_state, aggregator.global_model)
-        for i in range(cfg.training.num_clients):
-            if i in selected_indices:
-                delta = aggregator.compute_update(selected_posts[i], selected_pres[i])
-                all_gradient_alignments.append(delta)
-            else:
-                # Unselected: zero delta (no training update)
-                all_gradient_alignments.append(OrderedDict(
-                    (k, torch.zeros_like(v)) for k, v in aggregator.global_model.items()
-                ))
-        if server_delta:
+        if server_delta and len(server_delta) > 0:  # empty OrderedDict is falsy; check keys explicitly
             raw_alignments = compute_gradient_alignment(
                 local_updates=all_gradient_alignments,
                 global_update=server_delta,
                 device=device,
             )
-            all_gradient_alignments = list(raw_alignments)  # aligned with 0..K-1 order
+            all_gradient_alignments = list(raw_alignments)  # [K] floats, aligned with 0..K-1 order
+        else:
+            # Server model unchanged (e.g., cold start) — use uniform alignments
+            all_gradient_alignments = [0.0] * cfg.training.num_clients
 
         # ── Step D: Federated aggregation — selected clients only ──────────────
         #   Only selected clients contribute to aggregation (RL selection policy)
-        selected_client_infos = [
-            {
-                "num_samples": client.num_train_samples,
-                "accuracy": acc,
-                "loss": client.current_loss,
-            }
-            for client, acc in zip(selected_clients,
-                                    [all_client_accuracies[i] for i in selected_indices])
-        ]
-
-        # Collect POST-training model states for aggregation
         post_train_models = [client.get_model_state() for client in selected_clients]
 
-        aggregated_model, trust_scores, attention_values = aggregator.aggregate_round(
+        aggregated_model, trust_scores = aggregator.aggregate_round(
             local_models=post_train_models,
             server_model=server_state,
-            client_infos=selected_client_infos,
             selected_indices=selected_indices,
-            minority_fractions=[
-                local_clients[i].minority_class_fraction for i in selected_indices
-            ],
-            pre_train_models=pre_train_models,  # FIX: Global Start — clean deltas
+            pre_train_models=pre_train_models,  # clean deltas via Global Start Principle
         )
 
-        # ── Step E: Apply Fed+ personalisation — selected clients only ──────────
-        # FIX (Global Start): First set client to the NEW global model,
-        # then apply personalisation on top. This ensures the personalisation
-        # offset theta_k is computed relative to the fresh global model,
-        # not the old personalised state.
+        # ── Step E: Apply aggregated global model — NO personalisation during FL training ──
+        #  Fed+ personalisation (kappa mixing) was causing client-local
+        # overfitting: 90-99% local accuracy but only 38-47% global accuracy.
+        # Root cause: kappa=0.01 → sigma=0.01 → κ=1/(1+η·σ) ≈ 0.997
+        # This means 99.7% of the client's personalisation is retained, and only
+        # 0.3% is contributed to the global model — clients essentially stay private.
+        # Solution: give ALL clients the clean aggregated global model (no mixing).
+        # Personalisation can be re-enabled post-FL if per-client inference is needed.
         for client in selected_clients:
-            # Step 1: Give client the clean global model
             client.set_model_state(aggregated_model)
-            # Step 2: Apply personalisation on top of global model
-            personalised = aggregator.personalise_for_agent(
-                agent_id=client.client_id,
-                local_model=client.get_model_state(),
-                eta=cfg.ppo.lr_actor,
-            )
-            client.set_model_state(personalised)
 
         # Update server model with aggregated
         server_agent.set_model_state(aggregated_model)
@@ -761,156 +470,35 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
                 server_agent.actor_scheduler.step()
                 server_agent.critic_scheduler.step()
 
-        # ── Step F: Periodic novelty detector retraining (FIX F) ──
-        # Retrain autoencoder on high-confidence samples from current global model
-        # to keep the novelty boundary adaptive to evolving patterns.
-        if novelty_retrain_interval > 0 and (round_idx + 1) % novelty_retrain_interval == 0:
-            new_thresh, conf_thresh = retrain_novelty_detector(
-                novelty_detector=novelty_detector,
-                X_train=X_train,
-                y_train=y_train,
-                aggregated_model=aggregated_model,
-                X_test=X_test,
-                y_test=y_test,
-                num_classes=num_classes,
-                cfg=cfg,
-                device=device,
-            )
-            if new_thresh is not None:
-                novelty_thresh = new_thresh
-                novelty_detector_cpu = novelty_detector.cpu()
-                for client in local_clients:
-                    client.env._novelty_detector = novelty_detector_cpu
-                    client.env._novelty_threshold = novelty_thresh
-                    client.test_env._novelty_detector = novelty_detector_cpu
-                    client.test_env._novelty_threshold = novelty_thresh
-                novelty_detector.to(device)
-                print(f"    Novelty detector retrained: thresh={novelty_thresh:.6f} (conf>={conf_thresh})")
-
-        # FIX 4: drop placeholder eval_metrics/meta_eval defaults — these used to
-        # be overwritten with zeros before Step G.2 ran, polluting the selector reward.
-        # We now keep the previous round's real metrics in `eval_metrics` / `meta_eval`
-        # (initialised outside the loop) and refresh them BEFORE Step G.2.
-        selector_loss_info = ""  # initialise before G.2 block which may skip
-
-        # ── Step G: Meta-agent RL training (Tier 2) ──
-        # FIX (Meta-Agent Illusion): Train Meta-Agent on the Root Dataset (X_root),
-        # NOT the local testing set. This grounds the Meta-Agent in a globally
-        # representative distribution, preventing it from just learning to ensemble
-        # locally overfitted client predictions.
-        if meta_agent is not None and round_idx % cfg.training.meta_agent_eval_interval == 0:
-            sample_count = min(200, len(X_root))
-            for idx in range(sample_count):
-                state = X_root[idx].astype(np.float32)
-                true_label = y_root[idx]
-
-                # Collect all local agent actions as one-hot vectors
-                # FIX (B): select_action returns class index (int), not one-hot.
-                # Convert to one-hot [num_classes] per agent for meta-agent input.
-                all_action_vectors = []
-                for client in local_clients:
-                    action_idx, _, _ = client.ppo.select_action(state, deterministic=True)
-                    one_hot = np.zeros(num_classes, dtype=np.float32)
-                    one_hot[int(action_idx)] = 1.0
-                    all_action_vectors.append(one_hot)
-                agent_actions = np.stack(all_action_vectors)  # [num_agents, num_classes]
-
-                # Meta-agent selects action via its PPO policy
-                meta_action, meta_lp, meta_val = meta_agent.select_action(agent_actions, state)
-
-                # Reward: correct classification with class-balanced weighting (Fix 6)
-                # Uses inverse-frequency weighting so minority-class correct predictions
-                # get higher reward, preventing meta-agent from collapsing to majority class
-                predicted_class = int(np.argmax(meta_action))
-                if predicted_class == true_label:
-                    # Correct: reward by inverse class frequency (rarer class = higher reward)
-                    cls_freq = y_root[:sample_count].tolist().count(true_label) / sample_count
-                    freq_weight = 1.0 / (cls_freq + 1e-8)
-                    freq_weight = min(freq_weight, 3.0)  # cap at 3x
-                    meta_reward = 1.0 * freq_weight
-                else:
-                    # Wrong: penalty proportional to how common the true class is
-                    cls_freq = y_root[:sample_count].tolist().count(true_label) / sample_count
-                    penalty_scale = max(0.1, cls_freq)  # lower penalty for rare-class errors
-                    meta_reward = -0.5 * penalty_scale
-                done = (idx == sample_count - 1)
-
-                meta_agent.store_transition(
-                    state, agent_actions, meta_action, meta_lp, meta_reward, meta_val, done
-                )
-
-            meta_agent.update()
-
-        # ── Evaluation (FIX 4: BEFORE record_selection so selector reward uses real metrics) ──
-        meta_info = ""
-        meta_eval_refreshed_this_round = False
+        # ── Evaluation ──
+        selector_loss_info = ""
         if (round_idx + 1) % eval_interval == 0 or round_idx == 0:
             eval_metrics = evaluate_global_model(
                 aggregated_model, X_test, y_test,
                 num_classes, cfg, device,
             )
 
-            # Meta-agent evaluation (periodic, to measure Tier-2 contribution)
-            if (meta_agent is not None
-                    and cfg.training.meta_agent_enabled
-                    and (round_idx + 1) % cfg.training.meta_agent_eval_interval == 0):
-                meta_eval = evaluate_with_meta_agent(
-                    aggregated_model, local_clients,
-                    X_test, y_test, num_classes, cfg, device, meta_agent,
-                )
-                meta_info = (f"Meta-Acc: {meta_eval['meta_accuracy']:.4f} | "
-                             f"Meta-F1: {meta_eval['meta_f1']:.4f}")
-            else:
-                meta_eval = None
-            meta_eval_refreshed_this_round = True
-
-        # ── Step G.2: Selector PPO update (Tier 3) ───────────────────────────────
+        # ── Selector PPO update (Tier 2) ───────────────────────────────
         if (client_selector is not None
                 and (round_idx + 1) % cfg.training.selector_eval_interval == 0):
 
-            # Use meta-agent accuracy in reward if available; else fall back to global
-            meta_acc_for_reward = (
-                meta_eval["meta_accuracy"]
-                if meta_eval is not None else eval_metrics["accuracy"]
-            )
-
-            # Get Bernoulli probabilities and hybrid scores for reward / record
+            # Selector reward uses FLTrust temporal reputations (K-length list).
+            # NOTE: trust_scores from aggregate_round is SELECTED-only (length = len(selected_clients)).
+            # We MUST use fl_trust.reputations (K-length) for correct indexing in compute_reward:
+            #   selected_trusts = [reputations[k] for k in selected_indices]
+            # Using the returned trust_scores would cause IndexError or wrong trust values.
             reputations = aggregator.fl_trust.reputations[:cfg.training.num_clients]
-            prev_attn = history["attention_values"][-1] if history["attention_values"] else \
-                        [1.0 / cfg.training.num_clients] * cfg.training.num_clients
-            data_shares = [
-                client.num_train_samples / sum(c.num_train_samples for c in local_clients)
-                for client in local_clients
-            ]
-            bernoulli_probs, hybrid_scores = client_selector.get_hybrid_scores(
-                reputations=reputations,
-                attention_weights=prev_attn,
-                client_losses=all_client_losses,
-                model_divergences=[compute_model_divergence(
-                    client.get_model_state(), aggregator.global_model
-                ) for client in local_clients],
-                gradient_alignments=all_gradient_alignments,
-                data_shares=data_shares,
-                minority_fractions=[c.minority_class_fraction for c in local_clients],  # Task 3 Option A
-            )
 
-            # Record this round's selection for selector training
             client_selector.record_selection(
                 selected_indices=selected_indices,
                 global_accuracy=eval_metrics["accuracy"],
-                meta_accuracy=meta_acc_for_reward,
-                trust_scores=trust_scores,
-                client_divergences=[
-                    compute_model_divergence(client.get_model_state(), aggregator.global_model)
-                    for client in local_clients
-                ],
-                current_probs=bernoulli_probs,
+                trust_scores=reputations,   # K-length FLTrust reputations, not selected-only
+                bernoulli_probs=bernoulli_probs,
             )
 
-            # Update F1 EMAs from all clients (selector learns from all clients' performance)
+            # Update F1 EMAs from all clients
             client_selector.update_f1_from_round(
                 selected_indices=selected_indices,
-                client_accuracies=all_client_accuracies,
                 client_f1s=all_client_f1s,
             )
 
@@ -921,7 +509,7 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
             ]
             client_selector._prev_gradient_alignments = all_gradient_alignments
 
-            # PPO update on collected selector transitions (with entropy decay via round_idx)
+            # PPO update with entropy decay
             selector_info = client_selector.update(round_idx=round_idx)
             if selector_info:
                 selector_loss_info = (
@@ -929,33 +517,18 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
                     f"Sel-Critic: {selector_info.get('selector_critic_loss', 0):.4f} | "
                     f"H: {selector_info.get('selector_entropy', 0):.3f}"
                 )
-            else:
-                selector_loss_info = ""
-            # ── Evaluation ──
 
         round_time = time.time() - round_start
 
-        if meta_eval_refreshed_this_round:
-            # History append for meta-agent (eval already ran above before Step G.2)
-            if meta_eval is not None:
-                history["meta_agent_accuracy"].append(meta_eval["meta_accuracy"])
-                history["meta_agent_f1"].append(meta_eval["meta_f1"])
-            else:
-                history["meta_agent_accuracy"].append(None)
-                history["meta_agent_f1"].append(None)
-
+        if (round_idx + 1) % eval_interval == 0 or round_idx == 0:
             history["rounds"].append(round_idx + 1)
-            history["meta_agent_enabled"] = cfg.training.meta_agent_enabled  # Task 7: ablation record
             history["accuracy"].append(eval_metrics["accuracy"])
             history["precision"].append(eval_metrics["precision"])
             history["recall"].append(eval_metrics["recall"])
             history["f1"].append(eval_metrics["f1_score"])
-            history["f1_macro"].append(eval_metrics.get("f1_macro", 0.0))   # Task 6
+            history["f1_macro"].append(eval_metrics.get("f1_macro", 0.0))
             history["fpr"].append(eval_metrics["fpr"])
             history["trust_scores"].append(trust_scores)
-            history["attention_values"].append(
-                [float(a) for a in attention_values]
-            )
             history["client_accuracies"].append(all_client_accuracies)
             history["selected_clients"].append(selected_indices)
 
@@ -971,9 +544,7 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
                 num_clients=cfg.training.num_clients,
             )
 
-            # Task 6: log f1_macro and minority-class recall
             f1_macro_val = eval_metrics.get("f1_macro", 0.0)
-            # Minority class recall (first non-zero class or class 1)
             recall_per_class = eval_metrics.get("recall_per_class", {})
             minority_recall = recall_per_class.get(1, recall_per_class.get(min(recall_per_class.keys()), 0.0)) if recall_per_class else 0.0
 
@@ -983,14 +554,13 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
                 f"Prec: {eval_metrics['precision']:.4f} | "
                 f"Rec: {eval_metrics['recall']:.4f} | "
                 f"F1: {eval_metrics['f1_score']:.4f} | "
-                f"F1m: {f1_macro_val:.4f} | "   # Task 6: macro F1
+                f"F1m: {f1_macro_val:.4f} | "
                 f"FPR: {eval_metrics['fpr']:.4f} | "
-                f"MinRec: {minority_recall:.4f} | "   # Task 6: minority class recall
+                f"MinRec: {minority_recall:.4f} | "
                 f"K_sel: {k_sel_this_round} | "
                 f"Sel: {selected_indices} | "
                 f"Trust: [{', '.join(f'{s:.2f}' for s in trust_scores)}] | "
                 f"Rep: [{', '.join(f'{r:.2f}' for r in reputations)}]"
-                + (f" | {meta_info}" if meta_info else "")
                 + (f" | {selector_loss_info}" if selector_loss_info else "")
                 + f" | Time: {round_time:.1f}s"
             )
@@ -1002,11 +572,6 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
                     aggregated_model,
                     os.path.join(cfg.training.output_dir, "best_model.pt"),
                 )
-                if meta_agent is not None:
-                    torch.save(
-                        meta_agent.get_state(),
-                        os.path.join(cfg.training.output_dir, "best_meta_agent.pt"),
-                    )
                 if client_selector is not None:
                     torch.save(
                         client_selector.get_state(),
@@ -1044,7 +609,6 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
             history=history,
             best_accuracy=best_accuracy,
             lr_states=lr_states if lr_states else None,
-            meta_agent_state=meta_agent.get_state() if meta_agent is not None else None,
             selector_state=client_selector.get_state() if client_selector is not None else None,
         )
 
@@ -1107,8 +671,6 @@ def run_multi_seed(cfg: Config) -> Dict[str, Dict[str, float]]:
         cfg_run.training = cfg.training
         cfg_run.ppo = cfg.ppo
         cfg_run.fed_trust = cfg.fed_trust
-        cfg_run.fed_plus = cfg.fed_plus
-        cfg_run.attention = cfg.attention
         cfg_run.reward = cfg.reward
         # Override seed
         cfg_run.training.seed = seed
@@ -1148,7 +710,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Federated RL-IDS Training")
     parser.add_argument("--dataset", type=str, default="edge_iiot",
-                        choices=["edge_iiot", "nsl_kdd", "iomt_2024", "unsw_nb15"])
+                        choices=["edge_iiot", "nsl_kdd", "iomt_2024", "unsw_nb15", "unified"],
+                        help="'unified' trains on all 4 datasets combined with universal 3-class taxonomy")
     parser.add_argument("--num_clients", type=int, default=10)
     parser.add_argument("--num_rounds", type=int, default=10)
     parser.add_argument("--local_episodes", type=int, default=5)
@@ -1165,10 +728,6 @@ if __name__ == "__main__":
                         help="Path to checkpoint_latest.pt to resume training")
     parser.add_argument("--seeds", type=int, nargs="+", default=None,
                         help="Multiple seeds for multi-run statistical rigor (e.g., --seeds 42 123 777)")
-    parser.add_argument("--novelty_retrain_interval", type=int, default=50,
-                        help="Retrain novelty autoencoder every N rounds (0=disabled)")
-    parser.add_argument("--meta_agent", action="store_true", default=False,
-                        help="Enable meta-agent (Tier-2). Use --no-meta_agent to disable.")
     args = parser.parse_args()
 
     cfg = Config()
@@ -1180,8 +739,6 @@ if __name__ == "__main__":
         cfg.training.max_steps_per_episode = args.max_steps_per_episode
     cfg.training.device = args.device
     cfg.training.seed = args.seed
-    cfg.training.novelty_retrain_interval = args.novelty_retrain_interval
-    cfg.training.meta_agent_enabled = args.meta_agent  # Task 7: ablation flag
 
     if args.seeds is not None:
         cfg.training.seeds = args.seeds

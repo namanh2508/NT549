@@ -111,7 +111,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, required=True,
                         help="Path to model checkpoint (.pt)")
     parser.add_argument("--dataset", type=str, default="edge_iiot",
-                        choices=["edge_iiot", "nsl_kdd", "iomt_2024", "unsw_nb15"])
+                        choices=["edge_iiot", "nsl_kdd", "iomt_2024", "unsw_nb15", "unified"])
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
 

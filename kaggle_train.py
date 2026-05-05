@@ -24,15 +24,15 @@ import shutil
 #  CONFIGURATION — Adjust these as needed
 # ══════════════════════════════════════════════════════════════
 
-NUM_ROUNDS = 10                   # Total communication rounds (Kaggle-friendly)
+NUM_ROUNDS = 5                    # Total communication rounds (Kaggle-friendly)
 NUM_CLIENTS = 10                  # Number of federated clients (can be 4, 6, 8, ...)
-LOCAL_EPISODES = 10                # Local RL episodes per round per client
+LOCAL_EPISODES = 5               # Local RL episodes per round per client
 SAMPLE_LIMIT = 50000              # Max samples per CSV file
 SEED = 42
 # Dataset names must match Config.dataset keys:
 #   "nsl_kdd", "edge_iiot", "unsw_nb15", "iomt_2024"
 # (internal: "iomt" maps to "iomt_2024" in Config, "edge" -> "edge_iiot", etc.)
-DATASETS_TO_TRAIN = ["nsl_kdd", "edge_iiot", "unsw_nb15", "iomt_2024"]
+DATASETS_TO_TRAIN = ["edge_iiot"]  # TEST: start with 1 dataset only, 5 rounds
 
 # ══════════════════════════════════════════════════════════════
 #  STEP 1: Setup code & data
@@ -40,11 +40,11 @@ DATASETS_TO_TRAIN = ["nsl_kdd", "edge_iiot", "unsw_nb15", "iomt_2024"]
 
 CODE_DATASET_SLUG = "nt549-code"
 DATA_DATASET_SLUG = "NT549_full_datasets"
-WORK_DIR = "/kaggle/working/NT549_2"
+WORK_DIR = "/kaggle/working/NT549"
 
 if os.path.exists("/kaggle"):
     # ── Copy code from Kaggle input into working dir ──
-    code_input = f"/kaggle/input/datasets/phungvannamanh/{CODE_DATASET_SLUG}/NT549_2/"
+    code_input = f"/kaggle/input/datasets/phungvannamanh/{CODE_DATASET_SLUG}/NT549/"
     if os.path.exists(code_input):
         if not os.path.exists(WORK_DIR):
             shutil.copytree(code_input, WORK_DIR)
@@ -130,7 +130,7 @@ if os.path.exists("/kaggle"):
     search_roots = [
         os.path.join(WORK_DIR, "outputs"),                  # NT549_2/outputs/
         os.path.join(WORK_DIR, "..", "outputs"),           # sibling to NT549_2/ in dataset
-        "/kaggle/working/NT549_2/outputs",                  # direct path
+        "/kaggle/working/NT549/outputs",                  # direct path
     ]
     for search_root in search_roots:
         if os.path.exists(search_root):
@@ -363,7 +363,7 @@ for dataset_name in DATASETS_TO_TRAIN:
     print(f"{'='*70}")
 
     if os.path.exists("/kaggle"):
-        output_dir = "/kaggle/working/NT549_2/outputs"
+        output_dir = "/kaggle/working/NT549/outputs"
     else:
         output_dir = os.path.join(WORK_DIR, "outputs")
 
@@ -411,8 +411,8 @@ for dataset_name in DATASETS_TO_TRAIN:
     cfg.training.seed = SEED
     cfg.training.sample_limit_per_file = SAMPLE_LIMIT
     cfg.training.output_dir = output_dir
-    cfg.training.meta_agent_enabled = True           # Enable Tier-2 meta-agent
-    cfg.training.novelty_retrain_interval = 0       # Disable novelty retraining for speed
+    cfg.training.meta_agent_enabled = False          # Disabled: causes overfitting (Bug 4)
+    cfg.training.novelty_retrain_interval = 0        # Disable novelty retraining for speed
     cfg.training.client_selection_enabled = True     # Enable RL client selector
 
     # ── Train ──
@@ -452,7 +452,7 @@ print("=" * 70)
 # List all output files
 if os.path.exists("/kaggle"):
     for ds in DATASETS_TO_TRAIN:
-        out = os.path.join("/kaggle/working/NT549_2/outputs", f"outputs_{ds}")
+        out = os.path.join("/kaggle/working/NT549/outputs", f"outputs_{ds}")
         if os.path.exists(out):
             files = os.listdir(out)
             print(f"\n  {ds}: {files}")

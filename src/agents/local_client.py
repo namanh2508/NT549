@@ -78,8 +78,6 @@ class LocalClient:
 
     def train_local(self, num_episodes: int) -> Dict[str, float]:
         """Run local PPO training for num_episodes."""
-        # BUG-C fix: reset novelty tracking at start of each FL round
-        self.env.reset_novelty_tracking()
         total_reward = 0.0
         total_steps = 0
         ep_accuracies = []
