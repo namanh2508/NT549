@@ -559,7 +559,7 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
                 f"F1m: {f1_macro_val:.4f} | "
                 f"FPR: {eval_metrics['fpr']:.4f} | "
                 f"MinRec: {minority_recall:.4f} | "
-                f"K_sel: {k_sel_this_round} | "
+                f"K_sel: {k_sel} | " if client_selector is not None else "",
                 f"Sel: {selected_indices} | "
                 f"Trust: [{', '.join(f'{s:.2f}' for s in trust_scores)}] | "
                 f"Rep: [{', '.join(f'{r:.2f}' for r in reputations)}]"
