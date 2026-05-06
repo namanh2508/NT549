@@ -432,7 +432,6 @@ class MultiClassIDSEnvironment(IDSEnvironment):
             "class_metrics": {k: v.copy() for k, v in self._class_metrics.items()},
             "episode_metrics": self._episode_metrics.copy(),
             "collapse_detected": self._collapse_detected,
-            "pred_hhi": self.get_episode_hhi(),
         }
 
         return next_state, reward, done, info
