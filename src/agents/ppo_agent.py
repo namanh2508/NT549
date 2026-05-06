@@ -78,6 +78,14 @@ class RolloutBuffer:
             returns[t] = gae + self.values[t]
             next_value = self.values[t]
 
+        # Normalize returns: prevents critic loss explosion (V3 fix)
+        if len(returns) > 1:
+            r_mean = np.mean(returns)
+            r_std = np.std(returns)
+            if r_std > 1e-6:
+                returns = (returns - r_mean) / r_std
+                advantages = advantages / r_std  # scale advantages consistently
+
         return advantages, returns
 
     def to_tensors(self, device: torch.device):
@@ -193,11 +201,7 @@ class PPOAgent:
         advantages_t = torch.FloatTensor(advantages).to(self.device)
         returns_t = torch.FloatTensor(returns).to(self.device)
 
-        # Normalise advantages
-        if len(advantages_t) > 1:
-            advantages_t = (advantages_t - advantages_t.mean()) / (advantages_t.std() + 1e-8)
-
-        # Compute class weights for focal loss (Fix 2)
+        # advantages already normalized per-buffer, no need to renormalize here
         if class_weights is not None:
             cw_t = torch.FloatTensor(class_weights).to(self.device)
         else:
@@ -220,6 +224,12 @@ class PPOAgent:
                 mb_advantages = advantages_t[idx]          # [mb]
                 mb_returns = returns_t[idx]                # [mb]
                 mb_weights = buffer_weights[idx]            # [mb] — per-step sample weights
+
+                # Per-minibatch advantage normalization (V3 fix)
+                mb_adv_mean = mb_advantages.mean()
+                mb_adv_std = mb_advantages.std()
+                if mb_adv_std > 1e-6:
+                    mb_advantages = (mb_advantages - mb_adv_mean) / mb_adv_std
 
                 # New log probs under current policy
                 logits = self.actor(mb_states)              # [mb, action_dim]

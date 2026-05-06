@@ -24,15 +24,19 @@ import shutil
 #  CONFIGURATION — Adjust these as needed
 # ══════════════════════════════════════════════════════════════
 
-NUM_ROUNDS = 10                    # Total communication rounds (Kaggle-friendly)
-NUM_CLIENTS = 10                  # Number of federated clients (can be 4, 6, 8, ...)
-LOCAL_EPISODES = 5               # Local RL episodes per round per client
+NUM_ROUNDS = 30                    # Total communication rounds
+NUM_CLIENTS = 10                  # Number of federated clients
+LOCAL_EPISODES = 8               # Local RL episodes per round per client (V2 fix: 5→8)
 SAMPLE_LIMIT = 50000              # Max samples per CSV file
 SEED = 42
-# Dataset names must match Config.dataset keys:
-#   "nsl_kdd", "edge_iiot", "unsw_nb15", "iomt_2024"
-# (internal: "iomt" maps to "iomt_2024" in Config, "edge" -> "edge_iiot", etc.)
 DATASETS_TO_TRAIN = ["edge_iiot"]
+
+# ── BASELINE MODE ──────────────────────────────────────────────
+# Set RUN_MODE = "baseline" to run non-federated single-agent baseline
+# Set RUN_MODE = "federated" to run federated training (original)
+# Set RUN_MODE = "compare" to run both baseline + federated and compare
+RUN_MODE = "federated"            # <-- CHANGE THIS to switch modes
+BASELINE_ROUNDS = 40             # rounds for baseline (lower LR, slower convergence)
 
 # ══════════════════════════════════════════════════════════════
 #  STEP 1: Setup code & data
@@ -157,7 +161,49 @@ else:
 
 
 # ══════════════════════════════════════════════════════════════
-#  STEP 2: Import & Check Environment
+#  STEP 2: V2/V3 Config Fixes (apply BEFORE training)
+# ══════════════════════════════════════════════════════════════
+
+def apply_v3_config(cfg: Config) -> Config:
+    """
+    Apply V3 config to Config for federated training — MATCHES baseline_train.py V3.
+
+    V3 was verified working on baseline (edge_iiot: Acc=0.84, F1=0.80).
+    Applying the SAME parameters to federated for fair comparison.
+
+    Key changes from default (config.py):
+      Reward:
+        tn_reward 5.0→1.0    (ngăn FPR=1.0 collapse)
+        fn_penalty 3.0→4.0  (tăng attack detection signal)
+        collapse_thr 0.65→0.70, collapse_pen 20→15, macro_f1_coef 5→3, ...
+      PPO:
+        lr_actor 3e-4→1e-4, lr_critic 1e-3→5e-4
+        clip_epsilon 0.2→0.1, ppo_epochs 4→8, mini_batch 64→128
+    Note: return_norm in GAE + per-mb advantage norm are already in ppo_agent.py (always active).
+    """
+    # Reward
+    cfg.reward.tn_reward = 1.0
+    cfg.reward.fn_penalty = 4.0
+    cfg.reward.balance_coef = 1.0
+    cfg.reward.entropy_coef = 1.0
+    cfg.reward.hhi_coef = 1.0
+    cfg.reward.collapse_thr = 0.70
+    cfg.reward.collapse_pen = 15.0
+    cfg.reward.macro_f1_coef = 3.0
+
+    # PPO
+    cfg.ppo.lr_actor = 1e-4
+    cfg.ppo.lr_critic = 5e-4
+    cfg.ppo.clip_epsilon = 0.1
+    cfg.ppo.ppo_epochs = 8
+    cfg.ppo.mini_batch_size = 128
+    cfg.ppo.lr_min_factor = 0.05
+
+    return cfg
+
+
+# ══════════════════════════════════════════════════════════════
+#  STEP 3: Import & Check Environment
 # ══════════════════════════════════════════════════════════════
 
 import torch
@@ -166,6 +212,7 @@ import numpy as np
 
 from src.config import Config
 from src.train import run_training, load_checkpoint
+from baseline_train import run_baseline, compare_with_federated
 
 print(f"\nPyTorch: {torch.__version__}")
 print(f"CUDA available: {torch.cuda.is_available()}")
@@ -177,7 +224,7 @@ if torch.cuda.is_available():
 
 
 # ══════════════════════════════════════════════════════════════
-#  STEP 3: Plotting Utilities
+#  STEP 4: Plotting Utilities
 # ══════════════════════════════════════════════════════════════
 
 def plot_training_metrics(history, dataset_name, output_dir):
@@ -351,8 +398,201 @@ def print_final_summary(all_results):
     print("=" * 90)
 
 
+def compare_federated_vs_baseline(fed_history, baseline_history, dataset_name):
+    """Print side-by-side comparison of federated vs baseline results."""
+    print("\n" + "=" * 90)
+    print(f"  COMPARISON: Federated vs Baseline — {dataset_name.upper()}")
+    print("=" * 90)
+
+    metrics = ["accuracy", "precision", "recall", "f1_score", "f1_macro"]
+    metric_labels = ["Accuracy", "Precision", "Recall", "F1-Score", "F1-Macro"]
+
+    # Get final values
+    print(f"\n  {'Metric':<15} {'Federated':>12} {'Baseline':>12} {'Delta':>12} {'Winner':>10}")
+    print(f"  {'-'*55}")
+
+    fed_wins = 0
+    for m, label in zip(metrics, metric_labels):
+        f_val = fed_history.get(m, [0])[-1] if fed_history.get(m) else 0.0
+        b_val = baseline_history.get(m, [0])[-1] if baseline_history.get(m) else 0.0
+        delta = f_val - b_val
+        sign = "+" if delta >= 0 else ""
+        winner = "Federated" if delta > 0 else "Baseline" if delta < 0 else "Tie"
+        if delta > 0:
+            fed_wins += 1
+        print(f"  {label:<15} {f_val:>12.4f} {b_val:>12.4f} {sign}{delta:>11.4f} {winner:>10}")
+
+    # FPR comparison (lower is better)
+    f_fpr = fed_history.get("fpr", [1.0])[-1] if fed_history.get("fpr") else 1.0
+    b_fpr = baseline_history.get("fpr", [1.0])[-1] if baseline_history.get("fpr") else 1.0
+    fpr_delta = f_fpr - b_fpr
+    fpr_sign = "+" if fpr_delta >= 0 else ""
+    fpr_winner = "Federated" if f_fpr < b_fpr else "Baseline" if f_fpr > b_fpr else "Tie"
+    print(f"  {'FPR':<15} {f_fpr:>12.4f} {b_fpr:>12.4f} {fpr_sign}{fpr_delta:>11.4f} {fpr_winner:>10}")
+
+    # Training curves — peak and convergence speed
+    if fed_history.get("accuracy") and baseline_history.get("accuracy"):
+        f_peak = max(fed_history["accuracy"])
+        b_peak = max(baseline_history["accuracy"])
+        f_best_round = fed_history["accuracy"].index(f_peak) + 1
+        b_best_round = baseline_history["accuracy"].index(b_peak) + 1
+        print(f"\n  {'Metric':<15} {'Federated':>12} {'Baseline':>12} {'Winner':>10}")
+        print(f"  {'-'*45}")
+        print(f"  {'Peak Accuracy':<15} {f_peak:>12.4f} {b_peak:>12.4f} "
+              f"{'Federated' if f_peak > b_peak else 'Baseline':>10}")
+        print(f"  {'Best Round':<15} {f_best_round:>12} {b_best_round:>12} "
+              f"{'Federated' if f_best_round < b_best_round else 'Baseline':>10}")
+        print(f"  {'Total Rounds':<15} {len(fed_history['accuracy']):>12} {len(baseline_history['accuracy']):>12}")
+
+    print(f"\n  Interpretation:")
+    if fed_wins >= 3:
+        print(f"  → Federated outperforms Baseline in {fed_wins}/5 metrics.")
+        print(f"    FLTrust + RL Client Selection is beneficial.")
+    else:
+        print(f"  → Baseline outperforms Federated in {5-fed_wins}/5 metrics.")
+        print(f"    Possible causes:")
+        print(f"    1. Non-IID data partitions hurt FL aggregation")
+        print(f"    2. RL selector hasn't converged yet")
+        print(f"    3. FLTrust threshold too strict, filtering good updates")
+        print(f"    4. Need more rounds for FL to converge")
+
+    print("=" * 90)
+
+
 # ══════════════════════════════════════════════════════════════
-#  STEP 4: Train all datasets with checkpoint/resume
+#  STEP 5a: BASELINE MODE — Single PPO Agent (No Federation)
+# ══════════════════════════════════════════════════════════════
+
+if RUN_MODE in ("baseline", "compare"):
+    print(f"\n{'='*70}")
+    print(f"  BASELINE MODE: Single PPO Agent (No Federation)")
+    print(f"{'='*70}")
+    print(f"  Dataset:    {DATASETS_TO_TRAIN}")
+    print(f"  Rounds:     {BASELINE_ROUNDS}")
+    print(f"  Episodes:   {LOCAL_EPISODES}")
+    print(f"  Max steps:  2000")
+    print(f"  V3 fixes:   TN_REWARD=1.0, lr=1e-4, clip=0.1, epochs=8, batch=128")
+    print(f"  Purpose:    Isolate PPO vs Federated performance")
+    print(f"{'='*70}")
+
+    baseline_results = {}
+    for dataset_name in DATASETS_TO_TRAIN:
+        print(f"\n{'='*70}")
+        print(f"  BASELINE: {dataset_name.upper()}")
+        print(f"{'='*70}")
+
+        cfg = Config()
+        cfg = apply_v3_config(cfg)   # V3 config (same as baseline_train.py)
+        cfg.training.dataset = dataset_name
+        cfg.training.local_episodes = LOCAL_EPISODES
+        cfg.training.device = "cuda" if torch.cuda.is_available() else "cpu"
+        cfg.training.seed = SEED
+        cfg.training.sample_limit_per_file = SAMPLE_LIMIT
+
+        if os.path.exists("/kaggle"):
+            output_dir = "/kaggle/working/NT549/outputs"
+        else:
+            output_dir = os.path.join(WORK_DIR, "outputs")
+        cfg.training.output_dir = os.path.join(output_dir, "baseline_cen")
+        os.makedirs(cfg.training.output_dir, exist_ok=True)
+
+        try:
+            history, final_metrics = run_baseline(cfg, num_rounds=BASELINE_ROUNDS)
+            baseline_results[dataset_name] = final_metrics
+            print(f"\n  ✓ {dataset_name} baseline done — Acc: {final_metrics.get('accuracy', 0):.4f}")
+
+            # Save plots for baseline
+            from pathlib import Path
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+
+            plots_dir = os.path.join(cfg.training.output_dir, "plots")
+            os.makedirs(plots_dir, exist_ok=True)
+            rounds = history.get("rounds", [])
+
+            if len(rounds) >= 2:
+                fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+                axes[0, 0].plot(rounds, history["accuracy"], "b-o", label="Acc", linewidth=2)
+                axes[0, 0].plot(rounds, history["f1_score"], "g-s", label="F1", linewidth=2)
+                axes[0, 0].plot(rounds, history["f1_macro"], "c-^", label="F1m", linewidth=2)
+                axes[0, 0].set_title("Accuracy & F1")
+                axes[0, 0].legend()
+                axes[0, 0].grid(True, alpha=0.3)
+                axes[0, 0].set_ylim(0, 1.05)
+
+                axes[0, 1].plot(rounds, [f * 100 for f in history["fpr"]], "r-o", linewidth=2)
+                axes[0, 1].set_title("False Positive Rate (%)")
+                axes[0, 1].grid(True, alpha=0.3)
+
+                axes[1, 0].plot(rounds, history["episode_rewards"], "m-o", linewidth=1.5)
+                axes[1, 0].set_title("Episode Reward")
+                axes[1, 0].grid(True, alpha=0.3)
+
+                axes[1, 1].plot(rounds, history["entropies"], "k-o", linewidth=1.5)
+                axes[1, 1].set_title("Policy Entropy")
+                axes[1, 1].grid(True, alpha=0.3)
+
+                for ax in axes.flat:
+                    ax.set_xlabel("Round")
+                fig.suptitle(f"Baseline (No Federation) — {dataset_name.upper()}", fontsize=14)
+                fig.tight_layout()
+                fig.savefig(os.path.join(plots_dir, "baseline_summary.png"), dpi=150)
+                plt.close(fig)
+                print(f"  ✓ Plots saved to {plots_dir}/")
+
+            # Compare with federated results
+            from pathlib import Path
+            if os.path.exists("/kaggle"):
+                fed_path = Path("/kaggle/working/NT549/outputs") / f"outputs_{dataset_name}" / "training_history.json"
+            else:
+                fed_path = Path(WORK_DIR) / "outputs" / f"outputs_{dataset_name}" / "training_history.json"
+
+            if fed_path.exists():
+                compare_with_federated(history, str(fed_path))
+
+        except Exception as e:
+            print(f"\n  ✗ {dataset_name} baseline failed: {e}")
+            import traceback
+            traceback.print_exc()
+            baseline_results[dataset_name] = None
+
+        import gc
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+
+    # Baseline summary
+    print("\n" + "=" * 90)
+    print("  BASELINE RESULTS SUMMARY")
+    print("=" * 90)
+    print(f"{'Dataset':<15} {'Acc':>8} {'Prec':>8} {'Rec':>8} {'F1':>8} {'F1m':>8} {'FPR':>8}")
+    print("-" * 90)
+    for name, metrics in baseline_results.items():
+        if metrics:
+            print(
+                f"{name.upper():<15} "
+                f"{metrics.get('accuracy', 0):>8.4f} "
+                f"{metrics.get('precision', 0):>8.4f} "
+                f"{metrics.get('recall', 0):>8.4f} "
+                f"{metrics.get('f1_score', 0):>8.4f} "
+                f"{metrics.get('f1_macro', 0):>8.4f} "
+                f"{metrics.get('fpr', 0):>8.4f}"
+            )
+    print("=" * 90)
+
+    if RUN_MODE == "compare":
+        print("\n\n" + "=" * 70)
+        print("  BASELINE COMPLETE — Switching to FEDERATED mode...")
+        print("=" * 70)
+    else:
+        print("\n  ALL BASELINE TRAINING COMPLETE")
+        print("=" * 70)
+        sys.exit(0)  # Exit after baseline, don't run federated
+
+
+# ══════════════════════════════════════════════════════════════
+#  STEP 5b: FEDERATED MODE — PPO + FLTrust + RL Client Selector
 # ══════════════════════════════════════════════════════════════
 
 all_results = {}
@@ -403,6 +643,7 @@ for dataset_name in DATASETS_TO_TRAIN:
 
     # ── Configure ──
     cfg = Config()
+    cfg = apply_v3_config(cfg)   # V3 config (same as baseline_train.py)
     cfg.training.dataset = dataset_name
     cfg.training.num_clients = NUM_CLIENTS
     cfg.training.num_rounds = NUM_ROUNDS
@@ -412,6 +653,12 @@ for dataset_name in DATASETS_TO_TRAIN:
     cfg.training.sample_limit_per_file = SAMPLE_LIMIT
     cfg.training.output_dir = output_dir
     cfg.training.client_selection_enabled = True     # RL Client Selector (Tier-2)
+    cfg.training.clients_per_round = max(3, NUM_CLIENTS // 2)  # K_sel = half of clients
+
+    print(f"\n  V3 Config applied (matches baseline_train.py):")
+    print(f"    TN_REWARD={cfg.reward.tn_reward}, FN_PENALTY={cfg.reward.fn_penalty}")
+    print(f"    lr_actor={cfg.ppo.lr_actor}, lr_critic={cfg.ppo.lr_critic}")
+    print(f"    clip_epsilon={cfg.ppo.clip_epsilon}, epochs={cfg.ppo.ppo_epochs}, batch={cfg.ppo.mini_batch_size}")
 
     # ── Train ──
     try:
@@ -438,10 +685,45 @@ for dataset_name in DATASETS_TO_TRAIN:
     print(f"\n  [MEM] {dataset_name} cleanup: torch.cuda.empty_cache() + gc.collect() done")
 
 # ══════════════════════════════════════════════════════════════
-#  STEP 5: Summary
+#  STEP 6: Summary
 # ══════════════════════════════════════════════════════════════
 
 print_final_summary(all_results)
+
+# Compare federated vs baseline in "compare" mode
+if RUN_MODE == "compare" and baseline_results:
+    for dataset_name in DATASETS_TO_TRAIN:
+        if dataset_name not in baseline_results or baseline_results[dataset_name] is None:
+            continue
+
+        # Load baseline history
+        if os.path.exists("/kaggle"):
+            baseline_hist_path = Path("/kaggle/working/NT549/outputs/baseline_cen/baseline_v3_history.json")
+        else:
+            baseline_hist_path = Path(WORK_DIR) / "outputs" / "baseline_cen" / "baseline_v3_history.json"
+
+        if not baseline_hist_path.exists():
+            # Try finding any baseline history file
+            possible_paths = list(Path("/kaggle/working/NT549/outputs").glob("**/baseline*history*.json")) if os.path.exists("/kaggle") else list(Path(WORK_DIR).glob("outputs/**/baseline*history*.json"))
+            for bp in possible_paths:
+                if dataset_name in str(bp) or "cen" in str(bp):
+                    baseline_hist_path = bp
+                    break
+
+        if baseline_hist_path.exists():
+            try:
+                with open(baseline_hist_path) as f:
+                    baseline_history = json.load(f)
+                # Load federated history
+                if os.path.exists("/kaggle"):
+                    fed_hist_path = Path("/kaggle/working/NT549/outputs") / f"outputs_{dataset_name}" / "training_history.json"
+                else:
+                    fed_hist_path = Path(WORK_DIR) / "outputs" / f"outputs_{dataset_name}" / "training_history.json"
+                with open(fed_hist_path) as f:
+                    fed_history = json.load(f)
+                compare_federated_vs_baseline(fed_history, baseline_history, dataset_name)
+            except Exception as e:
+                print(f"\n  ⚠ Could not compare: {e}")
 
 print("\n" + "=" * 70)
 print("  ALL TRAINING COMPLETE")
