@@ -10,6 +10,29 @@
 
 - [1. System Architecture & Data Flow](#1-system-architecture--data-flow)
 - [2. Theoretical Foundations](#2-theoretical-foundations)
+  - [2.1 Reinforcement Learning: PPO + GAE + MCC Reward](#211-ppo--schulman-et-al-arxiv-2017)
+    - [2.1.1 PPO — Schulman et al., arXiv 2017](#211-ppo--schulman-et-al-arxiv-2017)
+    - [2.1.2 GAE — Generalized Advantage Estimation](#212-gae--generalized-advantage-estimation)
+    - [2.1.3 MCC — Matthews Correlation Coefficient](#213-mcc--matthews-correlation-coefficient)
+  - [2.2 Federated Learning: FLTrust + Temporal Reputation](#22-federated-learning-fltrust--temporal-reputation)
+    - [2.2.1 FLTrust — Cao et al., NDSS 2021](#221-fltrust--cao-et-al-ndss-2021)
+    - [2.2.2 Temporal Reputation — RL-UDHFL, IEEE IoT 2026](#222-temporal-reputation--rl-udhfl-mohammadpour-et-al-ieee-iot-2026)
+    - [2.2.3 RL Client Selector — Bernoulli PPO (Tier-2)](#223-rl-client-selector--bernoulli-ppo-tier-2)
+  - [2.3 Data Processing: Non-IID + ADASYN + RENN + Focal Loss](#23-data-processing-non-iid--adasyn--renn--focal-loss)
+    - [2.3.1 ADASYN — Adaptive Synthetic Sampling](#231-adasyn--adaptive-synthetic-sampling)
+    - [2.3.2 RENN — Repeated Edited Nearest Neighbours](#232-renn--repeated-edited-nearest-neighbours)
+    - [2.3.3 Focal Loss](#233-focal-loss)
+    - [2.3.4 Non-IID Data Partitioning](#234-non-iid-data-partitioning)
+  - [2.4 Neural Network Backbone: CNN + GRU + CBAM](#24-neural-network-backbone-cnn--gru--cbam)
+    - [2.4.1 CNN — Convolutional Neural Network (1D for Temporal Features)](#241-cnn--convolutional-neural-network-1d-for-temporal-features)
+    - [2.4.2 GRU — Gated Recurrent Unit](#242-gru--gated-recurrent-unit)
+    - [2.4.3 CBAM — Convolutional Block Attention Module](#243-cbam--convolutional-block-attention-module)
+  - [2.5 Training Stability: CosineAnnealing + GroupNorm + Entropy](#25-training-stability-cosineannealing--groupnorm--entropy)
+    - [2.5.1 CosineAnnealing LR Scheduler](#251-cosineannealing-lr-scheduler)
+    - [2.5.2 GroupNorm — Normalization for Small Batch](#252-groupnorm--normalization-for-small-batch)
+    - [2.5.3 Entropy Regularization](#253-entropy-regularization)
+  - [2.6 Universal Taxonomy: Multi-Dataset Support](#26-universal-taxonomy-multi-dataset-support)
+  - [2.7 Architecture: Two-Tier Federated Design](#27-architecture-two-tier-federated-design)
 - [3. Literature Validation & Code Citations](#3-literature-validation--code-citations)
 - [4. Installation & Quick Start](#4-installation--quick-start)
 - [5. Training: Federated vs Baseline](#5-training-federated-vs-baseline)
@@ -159,127 +182,691 @@ Input: [batch, seq_len, feature_dim]
 
 ## 2. Theoretical Foundations
 
-### 2.1 Reinforcement Learning: PPO + MCC-Based Reward
+### 2.1 Reinforcement Learning: PPO + GAE + MCC Reward
 
-#### Why PPO?
+#### 2.1.1 PPO — Schulman et al., arXiv 2017
 
-PPO uses a clipped surrogate objective to prevent destructive policy updates:
+**Lý thuyết:** Policy Gradient methods update the policy in the direction of higher expected return. However, a large policy update can catastrophically collapse the policy (e.g., predicting all-Benign). PPO (Proximal Policy Optimization) constrains policy changes using a clipped surrogate objective, guaranteeing small, stable updates even in sensitive domains like IDS.
 
-```python
-# PPO ratio: exp(new_log_prob - old_log_prob)
-ratio = torch.exp(new_log_probs - old_log_probs)
-surr1 = ratio * advantages
-surr2 = clamp(ratio, 1 - ε, 1 + ε) * advantages
-actor_loss = -min(surr1, surr2).mean()  # Clipped prevents large jumps
-```
+**Ưu điểm so với vanilla Policy Gradient:**
+- **Trust Region**: Clipping ensures the new policy does not deviate too far from the old policy
+- **Sample Efficiency**: Reuses experience collected under the old policy
+- **Stable Convergence**: Widely proven in continuous and discrete control tasks
 
-With ε=0.1 (V3), the policy can change by at most 10% per update. This is critical for IDS where an unstable policy can collapse to predicting all-Benign.
+**Input:** State $s$, old policy $\pi_{\theta_{\text{old}}}$, collected trajectories
+**Output:** Updated policy $\pi_{\theta_{\text{new}}}$
 
-#### Why MCC-Based Reward?
+**Công thức — Clipped Surrogate Objective:**
 
-Standard accuracy is misleading on imbalanced datasets. A model predicting all-Benign achieves 78% accuracy on Edge-IIoT (78% attack ratio) while missing all attacks.
+$$L^{\text{CLIP}}(\theta) = \mathbb{E}_t\left[\min\left(r_t(\theta)\hat{A}_t,\;\text{clip}(r_t(\theta),\,1-\epsilon,\,1+\epsilon)\hat{A}_t\right)\right]$$
 
-**MCC (Matthews Correlation Coefficient):**
-```
-MCC = (TP×TN − FP×FN) / √[(TP+FP)(TP+FN)(TN+FP)(TN+FN)]
-```
+Trong đó:
+- **Ratio**: $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{\text{old}}}(a_t|s_t)} = \exp(\log\pi_\theta(a_t|s_t) - \log\pi_{\theta_{\text{old}}}(a_t|s_t))$
+- **Clip**: $\text{clip}(r, 1-\epsilon, 1+\epsilon)$ giới hạn ratio trong khoảng $[1-\epsilon, 1+\epsilon]$
+- **$\hat{A}_t$**: Advantage estimate từ GAE (xem 2.1.2)
 
-MCC is symmetric — it penalizes both false positives AND false negatives equally. Range: [-1, 1] where 1 = perfect, 0 = random, -1 = inverse.
-
-**Reward Components (V3):**
-```
-R = w·TP_REWARD·tp + TN_REWARD·tn
-    − w·FP_PENALTY·fp − w·FN_PENALTY·fn_boost·fn
-    + MCC_COEF·MCC + class_bonus − collapse_penalty
-```
-where `w` = inverse class frequency (rare classes get higher weight).
-
-#### Value/Reward Clipping in GAE
-
-Return normalization in GAE prevents critic loss explosion:
+**Ý nghĩa:** Khi advantage dương (action tốt), $\min(\cdot)$ chọn giá trị nhỏ hơn — ngăn policy tăng quá nhanh. Khi advantage âm, $\min(\cdot)$ ngăn policy giảm quá nhanh.
 
 ```python
-# V3 fix: normalize returns before computing advantages
-if len(returns) > 1:
-    returns = (returns - returns.mean()) / returns.std()
-    advantages = advantages / returns.std()
+# src/agents/ppo_agent.py — Clipped surrogate objective
+ratio = torch.exp(new_log_probs - old_log_probs)  # r_t(θ)
+surr1 = ratio * advantages                         # unclipped
+surr2 = torch.clamp(ratio, 1 - epsilon, 1 + epsilon) * advantages  # clipped
+actor_loss = -torch.min(surr1, surr2).mean()      # L^CLIP
 ```
 
-Without normalization, critic loss can grow from ~37 to ~140 (V1 bug), causing training instability.
+**Code implementation:**
+
+```173:194:src/agents/ppo_agent.py
+def update(self, states, actions, old_log_probs, rewards, dones, values):
+    # ── GAE computation ──────────────────────────────────────────────
+    advantages, returns = self.compute_gae(last_value, gamma=self.cfg.gamma, lam=self.cfg.gae_lambda)
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)  # normalize
+
+    # ── PPO update loop ─────────────────────────────────────────────
+    for _ in range(self.cfg.ppo_epochs):
+        for mb in minibatches:
+            new_log_probs, values_pred = self._forward(states[mb], actions[mb])
+            ratio = torch.exp(new_log_probs - old_log_probs[mb])
+            surr1 = ratio * advantages[mb]
+            surr2 = torch.clamp(ratio, 1 - self.cfg.clip_epsilon, 1 + self.cfg.clip_epsilon) * advantages[mb]
+            actor_loss = -torch.min(surr1, surr2).mean()
+            # Focal weight: down-weight easy (majority-class) samples
+            p_taken = torch.gather(torch.softmax(logits, dim=-1), 1, actions[mb].unsqueeze(1)).squeeze(1)
+            focal_weight = (1.0 - p_taken.detach()).pow(self.cfg.focal_gamma)
+            actor_loss = (actor_loss * focal_weight).mean()
+```
+
+#### 2.1.2 GAE — Generalized Advantage Estimation
+
+**Lý thuyết:** GAE cân bằng giữa bias và variance trong ước lượng advantage. Thay vì dùng TD($\lambda$) hay Monte Carlo, GAE cho phép kiểm soát trade-off qua tham số $\lambda \in [0, 1]$.
+
+**Input:** Trajectory: $\{s_0, a_0, r_0, s_1, \ldots, s_T\}$, Value function $V_\phi(s)$
+**Output:** Advantage estimates $\{\hat{A}_1, \ldots, \hat{A}_T\}$
+
+**Công thức:**
+
+$$\hat{A}_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{T-t}\left[(\gamma\lambda)^l \delta_t^{(V)}\right]$$
+
+$$\delta_t^{(V)} = r_t + \gamma V(s_{t+1}) - V(s_t)$$
+
+| $\lambda$ | Variance | Bias | Hành vi |
+|-----------|----------|------|---------|
+| $\lambda = 0$ | Cao | Cao | TD(0): 1-step bootstrap → dùng khi model đã tốt |
+| $\lambda = 1$ | Thấp | Thấp | Monte Carlo: không bootstrap |
+| $\lambda = 0.95$ | Trung bình | Trung bình | ✅ **Cân bằng tốt** — mặc định trong hệ thống |
+
+**Công thức recursive:**
+
+```python
+# src/agents/ppo_agent.py — GAE recursive computation
+def compute_gae(self, last_value: float, gamma: float, lam: float):
+    advantages = np.zeros(len(self.rewards), dtype=np.float32)
+    returns = np.zeros(len(self.rewards), dtype=np.float32)
+    gae = 0.0
+    next_value = last_value
+    for t in reversed(range(len(self.rewards))):
+        delta = self.rewards[t] + gamma * next_value * (1 - self.dones[t]) - self.values[t]
+        gae = delta + gamma * lam * (1 - self.dones[t]) * gae
+        advantages[t] = gae
+        returns[t] = gae + self.values[t]
+        next_value = self.values[t]
+    return advantages, returns
+```
+
+#### 2.1.3 MCC — Matthews Correlation Coefficient
+
+**Lý thuyết:** Accuracy là misleading metric trên imbalanced datasets. Một model predict tất cả Benign đạt 78% accuracy trên Edge-IIoT (78% attack ratio) nhưng bỏ sót TẤT CẢ attacks.
+
+**Input:** Confusion matrix elements: TP, TN, FP, FN
+**Output:** MCC score $\in [-1, 1]$
+
+**Công thức MCC:**
+
+$$\text{MCC} = \frac{\text{TP} \times \text{TN} - \text{FP} \times \text{FN}}{\sqrt{(\text{TP}+\text{FP})(\text{TP}+\text{FN})(\text{TN}+\text{FP})(\text{TN}+\text{FN})}}$$
+
+**Ý nghĩa:**
+- **MCC = +1**: Perfect prediction
+- **MCC = 0**: Random prediction
+- **MCC = -1**: Inverse prediction
+- **Symmetric**: MCC penalizes FP và FN equally, phù hợp với IDS (cả false alert và missed attack đều có chi phí cao)
+
+**Ưu điểm so với Accuracy/F1:**
+- Accuracy bỏ qua class imbalance → misleading
+- F1 không symmetric: có thể đạt F1 cao mà model vẫn bias
+- MCC là correlation coefficient → đo lường quality của binary classification đầy đủ
+
+**MCC-Based Reward (V3 config):**
+
+$$R = \underbrace{\text{TP} \times 3.0}_{\text{detect attack}} - \underbrace{\text{FP} \times 2.0}_{\text{false alert}} - \underbrace{\text{FN} \times 8.0}_{\text{miss attack}} + \underbrace{5.0 \times \text{MCC}}_{\text{correlation bonus}}$$
+
+```python
+# src/environment/ids_env.py — MCC-based reward
+r = self.reward_cfg
+reward = (
+    r.alpha * tp           # TP_REWARD = 3.0
+    - r.beta * fp          # FP_PENALTY = 2.0
+    - r.gamma * fn         # FN_PENALTY = 8.0 (highest: missed attacks worst)
+    + r.delta * (1.0 - norm_latency)  # latency bonus
+)
+# MCC bonus applied separately in PPO agent
+```
 
 ### 2.2 Federated Learning: FLTrust + Temporal Reputation
 
-#### FLTrust (Cao et al., NDSS 2021)
+#### 2.2.1 FLTrust — Cao et al., NDSS 2021
 
-FLTrust uses a clean server dataset as a reference ("root") to measure client update quality:
+**Lý thuyết:** FLTrust giải quyết Byzantine attack bằng cách sử dụng một **root dataset** tại server để tạo "ground truth" gradient. So sánh direction của local updates với direction của server update qua cosine similarity.
 
-```python
-# Trust = normalized cosine similarity + reputation bonus
-cos_k = cos(Δ_k, Δ_0) = ⟨Δ_k, Δ_0⟩ / (‖Δ_k‖ · ‖Δ_0‖)
+**Vấn đề Byzantine:**
+- Attacker có thể flip gradients: $\Delta_{\text{malicious}} = -\alpha \cdot \Delta_{\text{true}}$
+- FedAvg (weighted average) bị corrupted nghiêm trọng bởi 1 Byzantine client
+- FLTrust: cosine similarity âm → ReLU clip → weight $\approx 0$
+
+**Input:** Server update $\Delta_0$ (từ root dataset), Client updates $\{\Delta_k\}_{k=1}^K$
+**Output:** Global model update $\Delta_{\text{global}}$
+
+**Công thức FLTrust:**
+
+**Step 1 — Cosine Similarity:**
+$$c_k = \frac{\langle \Delta_k, \Delta_0 \rangle}{\|\Delta_k\| \cdot \|\Delta_0\|}$$
+
+**Step 2 — ReLU Clipping (loại bỏ negative directions):**
+$$TS_k = \max(0, c_k) = \text{ReLU}(c_k)$$
+
+**Step 3 — Min-Max Normalization:**
+$$\tilde{TS}_k = \frac{TS_k - \min_j TS_j}{\max_j TS_j - \min_j TS_j}$$
+
+**Step 4 — Trust-Weighted Aggregation:**
+$$\Delta_{\text{global}} = \sum_{k=1}^{K} \tilde{TS}_k \cdot \Delta_k$$
+
+**Ưu điểm:**
+- Byzantine clients with opposite-direction gradients → weight $\approx 0$
+- Server root dataset provides trustworthy reference direction
+- Lightweight: chỉ cần forward pass trên root dataset mỗi round
+
+**Code implementation:**
+
+```139:161:src/federated/fed_trust.py
+def compute_trust_scores(self, server_update, client_updates):
+    g0 = flatten_state_dict(server_update).to(self.device)
+    cosine_scores = []
+    for cu in client_updates:
+        gi = flatten_state_dict(cu).to(self.device)
+        cs = cosine_similarity(gi, g0)
+        cosine_scores.append(cs)
+
+    self.update_reputations(cosine_scores)
+
+    # ReLU on cosine → non-negative alignment scores
+    alignment = [max(0.0, cs) for cs in cosine_scores]
+
+    # Min-max normalization
+    min_a = min(alignment) if alignment else 0.0
+    max_a = max(alignment) if alignment else 1.0
+    range_a = max_a - min_a
+    if range_a > 1e-9:
+        cos_weighted = [(a - min_a) / range_a for a in alignment]
 ```
 
-A client whose gradient moves in the **opposite direction** of the server gets negative cosine → low weight. Byzantine attacks (e.g., sign flipping) are automatically down-weighted.
+#### 2.2.2 Temporal Reputation — RL-UDHFL, Mohammadpour et al., IEEE IoT 2026
 
-#### Why Growth > Decay in Temporal Reputation?
+**Lý thuyết:** FLTrust xử lý mỗi round độc lập — không có memory. Temporal Reputation thêm temporal memory để đánh giá clients dựa trên lịch sử contributions, không chỉ round hiện tại.
 
-Previous implementations had `decay=0.1 > growth=0.05`, structurally biasing reputation toward zero. The fix:
+**Input:** Current cosine similarity $c_k$ của client $k$
+**Output:** Updated reputation $R_{t+1}^k$
+
+**Công thức từ paper:**
+
+**Positive contribution** ($CS_t^i \geq \theta_c$):
+$$R_{t+1}^i = R_t^i + \gamma_r \times (1 - R_t^i)$$
+
+**Negative contribution** ($CS_t^i < \theta_c$):
+$$R_{t+1}^i = R_t^i - \delta_r \times R_t^i$$
+
+**Tại sao $\gamma_r > \delta_r$ là critical?**
+
+Nếu $\delta_r > \gamma_r$ (như trong RL-UDHFL gốc), reputation có structural bias về 0 → trust collapse. Fix trong hệ thống:
 
 ```python
-# Good client (cos > 0.5): R += 0.1 * (cos - 0.5) * (1 - R)
-# Bad client (cos < 0.5):  R -= 0.05 * (0.5 - cos) * R
+# src/federated/fed_trust.py — Anti-collapse reputation
+COSINE_POSITIVE_THRESHOLD = 0.0  # ReLU boundary
+reputation_growth = 0.1    # γ_r = 0.1
+reputation_decay = 0.05    # δ_r = 0.05  →  γ_r > δ_r
+
+for i, cs in enumerate(cosine_scores):
+    delta = cs - self.COSINE_POSITIVE_THRESHOLD
+    if delta > 0:
+        # Good client: R += 0.1 * cos * (1 - R)  → accumulate toward 1
+        self.reputations[i] += self.reputation_growth * delta * (1.0 - self.reputations[i])
+    else:
+        # Bad client: R -= 0.05 * |cos| * R  → decay toward 0
+        self.reputations[i] -= self.reputation_decay * abs(delta) * self.reputations[i]
+    self.reputations[i] = max(0.0, min(1.0, self.reputations[i]))
 ```
 
-Good clients accumulate reputation **2x faster** than bad clients lose it → trust stabilizes rather than collapsing.
+**Ưu điểm:**
+- Good clients (cos > 0) tích lũy reputation **2x nhanh hơn** bad clients mất
+- Reputation $\in [0, 1]$ → interpretable
+- Chống trust collapse: growth > decay đảm bảo trust không bị kéo về 0
 
-#### Bernoulli PPO Tier-2 Selection
+**Final Trust Score:**
+$$T_k = \tilde{TS}_k + 0.2 \times (R_k - 0.5)$$
 
-Unlike deterministic top-K selection, Bernoulli sampling allows the RL policy to explore different client combinations:
+#### 2.2.3 RL Client Selector — Bernoulli PPO (Tier-2)
 
-```python
-probs = sigmoid(actor(state))  # [K] — pure RL policy
-bernoulli_dist = Bernoulli(probs)
-selected = where(bernoulli_dist.sample() > 0.5)[0]
-```
+**Lý thuyết:** Thay vì chọn top-K clients deterministic (softmax-based như RL-UDHFL), hệ thống dùng Bernoulli PPO cho phép fully differentiable selection và exploration.
 
-The selector's reward incentivizes **fewer clients** (communication efficiency) while FLTrust handles **quality** (Byzantine robustness). Clean separation of concerns.
+**Input:** State vector $[R_k, l_k, \Delta_k, g_k, \mathrm{f1}_k, s_k, m_k]$ cho mỗi client
+**Output:** Binary selection $a_k \in \{0, 1\}$ cho mỗi client $k$
+
+**State vector components:**
+
+| Feature | Ký hiệu | Ý nghĩa | Range |
+|---------|---------|---------|-------|
+| $R_k$ | FLTrust reputation | Client reliability | $[0, 1]$ |
+| $l_k$ | Evaluation loss | Local model quality | $[0, \infty)$ |
+| $\Delta_k$ | Model divergence | $\\|w_k - w_{\text{glob}}\\| / \\|w_{\text{glob}}\\|$ | $[0, \infty)$ |
+| $g_k$ | Gradient alignment | $\cos(\Delta_k, \Delta_{\text{glob}})$ | $[-1, 1]$ |
+| $\mathrm{f1}_k$ | F1 EMA | Historical performance | $[0, 1]$ |
+| $s_k$ | Data share | $n_k / \sum n_j$ | $[0, 1]$ |
+| $m_k$ | Minority fraction | Rare class proportion | $[0, 1]$ |
+
+**Reward function:**
+$$R_t = \Delta\text{Acc} - 0.5 \cdot \frac{|S_t|}{K} - 1.0 \cdot \text{mean}_{k \in S_t}(1 - R_k)$$
+
+- **Term 1**: Improvement in global accuracy
+- **Term 2**: Penalize selecting too many clients (communication efficiency)
+- **Term 3**: Penalize low-reputation clients (quality assurance)
+
+**Bernoulli vs Softmax Top-K:**
+
+| | Softmax Top-K (RL-UDHFL) | Bernoulli PPO (Ours) |
+|--|--------------------------|----------------------|
+| Differentiability | Non-differentiable (argmax) | Fully differentiable |
+| Exploration | Limited | Full Bernoulli sampling |
+| Policy gradient | Degrades | Stable |
+| Output | Top-K fixed | Variable count per round |
 
 ### 2.3 Data Processing: Non-IID + ADASYN + RENN + Focal Loss
 
-#### Non-IID Partitioning
+#### 2.3.1 ADASYN — Adaptive Synthetic Sampling
 
-Real IoT networks have heterogeneous data distributions. We simulate this:
+**Lý thuyết (He et al., 2008):** ADASYN tạo synthetic samples cho minority class adaptively — tập trung vào các vùng khó học (hard-to-learn regions), thay vì phân bố đều như SMOTE.
+
+**Input:** Imbalanced dataset $D = \{(x_i, y_i)\}$, minority class ratio $r_i$
+**Output:** Balanced dataset với synthetic minority samples
+
+**Công thức:**
+
+1. Tính số synthetic samples cần tạo:
+$$g = (|D_{\text{maj}}| - |D_{\text{min}}|) \times \beta$$
+
+2. Với mỗi minority sample $x_i$, tính mức độ khó:
+$$r_i = \frac{\Delta_i}{k_1}, \quad \hat{r}_i = \frac{r_i}{\sum_i r_i}$$
+
+3. Số samples cần tạo cho $x_i$:
+$$g_i = \hat{r}_i \times g$$
+
+4. Synthetic sample:
+$$s_i = x_i + (x_{zi} - x_i) \times \lambda, \quad x_{zi} \in k\text{-NN minority}$$
+
+**Ưu điểm so với SMOTE:**
+- SMOTE: tạo samples đều trên boundary
+- ADASYN: tạo **nhiều hơn** ở vùng có $\hat{r}_i$ cao (harder regions)
+- Tự động adapt với local density của minority class
 
 ```python
-# Client i gets 50% from class (i mod C) + 50% from other classes
-primary_class = classes[client_id % num_classes]
-# Sequential, non-overlapping slices from per-class shuffled pools
-# (FIX: old code used shared pool with replacement → silent duplicate samples)
+# src/data/preprocessor.py
+from imblearn.over_sampling import ADASYN
+adasyn = ADASYN(sampling_strategy=sampling_dict, n_neighbors=5, random_state=42)
+X_step1, y_step1 = adasyn.fit_resample(X, y)
 ```
 
-#### ADASYN + RENN
+#### 2.3.2 RENN — Repeated Edited Nearest Neighbours
 
-ADASYN generates more synthetic samples in **harder minority regions** (unlike SMOTE which generates uniformly). RENN then removes noisy/borderline samples:
+**Lý thuyết (Tomek, 1976):** RENN loại bỏ noisy và borderline samples bằng cách dùng k-NN. Một sample bị loại nếu nó bị misclassified bởi majority trong k-NN của nó.
+
+**Input:** Dataset sau ADASYN oversampling (có thể chứa synthetic noise)
+**Output:** Clean dataset
+
+**Công thức:**
+
+$$S_{\text{enn}} = \{x_i \in S : x_i \in \text{majority\_class} \land x_i \in k\text{-NN of minority}\}$$
+
+- Lặp cho đến khi không còn sample nào bị loại
+- DBSCAN tiếp theo loại bỏ outliers cuối cùng
+
+**Pipeline ADASYN + RENN (ADRDB Algorithm, Cao et al., 2022):**
+```
+1. Split: majority (N) vs minority (P)
+2. ADASYN: oversample P → newP (adaptive)
+3. RENN: undersample N → newN (noise removal)
+4. DBSCAN: remove remaining outliers
+5. Merge: newP + newN → balanced dataset
+```
+
+**Ưu điểm:**
+- ADASYN: tạo đủ minority samples ở hard regions
+- RENN: dọn dẹp borderline/noisy samples
+- DBSCAN: loại bỏ outliers cuối cùng
+- Kết hợp → balanced + clean dataset
 
 ```python
-# ADASYN: adaptive oversampling
-adasyn = ADASYN(sampling_strategy=sampling_dict, n_neighbors=5)
-X_step1, y_step1 = adasyn.fit_resample(X, y)
-
-# RENN: noise removal via k-NN misclassification
+# src/data/preprocessor.py
+from imblearn.under_sampling import EditedNearestNeighbours
 enn = EditedNearestNeighbours(n_neighbors=5)
 X_resampled, y_resampled = enn.fit_resample(X_step1, y_step1)
 ```
 
-#### Focal Loss (γ=3.0 in training, accessed via reward_cfg)
+#### 2.3.3 Focal Loss
+
+**Lý thuyết (Lin et al., ICCV 2017):** Focal Loss giảm weight của "easy" samples (majority class) để tập trung vào "hard" samples (minority class, borderline cases).
+
+**Input:** Predicted probability $p_t \in [0, 1]$, true class probability $p_t$ (=$1$ nếu đúng class)
+**Output:** Focal loss scalar
+
+**Công thức:**
+
+$$\text{FL}(p_t) = -(1 - p_t)^\gamma \log(p_t)$$
+
+| $\gamma$ | Hành vi |
+|---------|---------|
+| $\gamma = 0$ | Focal Loss = Cross-Entropy (baseline) |
+| $\gamma = 1$ | Standard focal loss |
+| $\gamma = 2$ | **Mặc định trong hệ thống** |
+| $\gamma = 3$ | Aggressive down-weighting |
+
+**Ví dụ với $\gamma = 2$:**
+
+| $p_t$ | $(1-p_t)^2$ | Weight reduction |
+|-------|-------------|-----------------|
+| 0.9 (easy) | 0.01 | **100x down-weighted** |
+| 0.5 (hard) | 0.25 | 4x down-weighted |
+| 0.1 (very hard) | 0.81 | **1.2x up-weighted** |
+
+**Kết hợp với PPO (trong hệ thống):**
 
 ```python
-# Down-weight easy (majority-class) samples in PPO loss
-focal_weight = (1 - p_taken) ** focal_gamma
+# src/agents/ppo_agent.py — Focal Loss trong PPO update
+p_taken = torch.gather(
+    torch.softmax(logits, dim=-1), 1, actions.unsqueeze(1)
+).squeeze(1).detach()
+
+focal_weight = (1.0 - p_taken).pow(self.cfg.focal_gamma)  # (1-p_t)^γ
 combined_weight = focal_weight * class_weight * sample_weight
-actor_loss = -(min(surr1, surr2) * combined_weight).mean()
+actor_loss = -(torch.min(surr1, surr2) * combined_weight).mean()
 ```
 
-With γ=2.0, a sample with p_taken=0.9 contributes 100x less to the loss than a sample with p_taken=0.1.
+**Ưu điểm:**
+- Tự động điều chỉnh — không cần manually tune class weights
+- Dễ tích hợp vào PPO (multiplicative form)
+- Đặc biệt hiệu quả với ADASYN+RENN đã làm sạch data
+
+#### 2.3.4 Non-IID Data Partitioning
+
+**Lý thuyết:** Real IoT networks có heterogeneous data distributions. Mỗi client chỉ thấy traffic từ segment riêng. Non-IID partition mô phỏng điều này.
+
+**Strategy:** Mỗi client $i$ nhận 50% data từ class $(i \mod C)$ và 50% data từ các classes khác:
+
+```python
+# src/data/preprocessor.py — Non-IID partition
+primary_class = classes[client_id % num_classes]
+# Sequential, non-overlapping slices from per-class shuffled pools
+```
+
+**Tác động đến FL:**
+- Client drift: local models diverge từ global optimum
+- FLTrust + Temporal Reputation: giảm thiểu impact của heterogeneous updates
+- RL Selector: học chọn clients với data distributions tương tự
+
+### 2.4 Neural Network Backbone: CNN + GRU + CBAM
+
+#### 2.4.1 CNN — Convolutional Neural Network (1D for Temporal Features)
+
+**Lý thuyết (LeCun et al., 1989):** CNN sử dụng local connectivity và weight sharing để extract spatial/temporal patterns. Trong hệ thống này, Conv1D hoạt động trên temporal dimension của network flows.
+
+**Input:** $[batch, seq\_len, feature\_dim]$ — sequences của network flow features
+**Output:** $[batch, seq\_len, num\_filters]$
+
+**Cấu trúc Conv1D:**
+```
+Input: [batch, 79 features, 8 timesteps]
+  ↓ permute(0, 2, 1)
+[batch, 79, 8]  (feature_dim=79, seq_len=8)
+  ↓ Conv1D(kernel=3, out_channels=32)
+[batch, 32, 6]  (79-3+1=76... sau padding → ~same)
+  ↓ GroupNorm(1, 32) → ReLU
+  ↓ Conv1D(kernel=5, out_channels=64)
+[batch, 64, 6]
+  ↓ GroupNorm(1, 64) → ReLU
+```
+
+**Ưu điểm của Conv1D cho IDS:**
+- **Local Pattern Detection**: Conv1D với kernel=3 detect local dependencies (3 consecutive packets)
+- **Multi-scale**: Kernel=5 capture longer patterns (5 timesteps)
+- **Parameter Efficiency**: Weight sharing giảm overfitting so với fully connected
+- **Computational Efficiency**: GPU-accelerated, inference nhanh trên edge devices
+
+#### 2.4.2 GRU — Gated Recurrent Unit
+
+**Lý thuyết (Cho et al., EMNLP 2014):** GRU là lightweight RNN variant giải quyết vanishing gradient problem. GRU học long-range dependencies trong sequential network traffic data.
+
+**Input:** $[batch, seq\_len, hidden\_channels]$ từ CNN
+**Output:** $[batch, seq\_len, hidden\_dim]$ (hidden state per timestep)
+
+**Công thức GRU:**
+
+$$r_t = \sigma(W_r \cdot [h_{t-1}, x_t] + b_r) \quad \text{(reset gate)}$$
+
+$$z_t = \sigma(W_z \cdot [h_{t-1}, x_t] + b_z) \quad \text{(update gate)}$$
+
+$$\tilde{h}_t = \tanh(W_h \cdot [r_t \odot h_{t-1}, x_t] + b_h) \quad \text{(candidate hidden)}$$
+
+$$h_t = (1 - z_t) \odot h_{t-1} + z_t \odot \tilde{h}_t \quad \text{(final hidden)}$$
+
+**Ưu điểm so với LSTM:**
+- GRU có **2 gates** (update, reset) vs LSTM's 3 (input, forget, output)
+- Fewer parameters → less overfitting, faster training
+- Hiệu quả trong sequence modeling ngắn-trung bình (network flows)
+- GRU's update gate tương tự "forget + input" của LSTM
+
+**Trong hệ thống:**
+```python
+# src/models/networks.py — GRU layer
+self.gru = nn.GRU(
+    input_size=64,    # channels from CNN
+    hidden_size=256,   # 2x hidden
+    num_layers=2,
+    batch_first=True,
+    bidirectional=False  # Unidirectional: flows are causal
+)
+# Output: [batch, seq_len, 256] → Mean Pool → [batch, 256]
+```
+
+#### 2.4.3 CBAM — Convolutional Block Attention Module
+
+**Lý thuyết (Woo et al., ECCV 2018):** CBAM là lightweight attention module gồm 2 phần: Channel Attention và Spatial Attention, áp dụng **sequentially** (channel → spatial) để refine feature maps.
+
+**Input:** Feature map $F \in \mathbb{R}^{B \times C \times L}$ ($B$ = batch, $C$ = channels, $L$ = sequence length)
+**Output:** Refined feature map $F'' \in \mathbb{R}^{B \times C \times L}$
+
+**Channel Attention:**
+
+$$\text{Channel-Attn}(F) = \sigma(\text{MLP}(\text{AvgPool}(F)) + \text{MLP}(\text{MaxPool}(F)))$$
+
+- **AvgPool**: Global average pooling — captures "mean" features per channel
+- **MaxPool**: Global max pooling — captures "peak" features per channel
+- **Shared MLP**: 2-layer MLP với reduction ratio (giảm channels trước khi expand)
+- **Output**: $M_c \in \mathbb{R}^{C \times 1 \times 1}$ — attention weight per channel
+
+$$F' = F \otimes M_c \quad \text{(element-wise multiply)}$$
+
+**Spatial Attention:**
+
+$$\text{Spatial-Attn}(F') = \sigma(f^{7\times1}([\text{AvgPool}(F'); \text{MaxPool}(F')]))$$
+
+- **Concatenate**: AvgPool và MaxPool trên channel dimension
+- **Conv1D(k=7)**: 7×1 convolution tạo spatial attention map
+- **Output**: $M_s \in \mathbb{R}^{1 \times 1 \times L}$ — attention weight per timestep
+
+$$F'' = F' \otimes M_s \quad \text{(element-wise multiply)}$$
+
+**Complete CBAM flow:**
+$$F \xrightarrow{\otimes M_c} F' \xrightarrow{\otimes M_s} F''$$
+
+**Ưu điểm:**
+- **Lightweight**: Chỉ thêm ~2% parameters so với base CNN
+- **Sequential**: Channel → Spatial tốt hơn parallel (channel-only hoặc spatial-only)
+- **Plug-and-play**: Áp dụng được cho bất kỳ CNN architecture nào
+- **Interpretable**: Visualize attention maps để hiểu model focus vào đâu
+
+**Code implementation:**
+
+```159:188:src/models/networks.py
+def _apply_cbam(self, x: torch.Tensor) -> torch.Tensor:
+    # ── Channel attention ─────────────────────────────────────────────
+    avg_pool = x.mean(dim=2, keepdim=True)               # [B, C, 1]
+    max_pool = x.max(dim=2, keepdim=True)[0]            # [B, C, 1]
+    avg_attn = self.channel_mlp(avg_pool.squeeze(-1)).unsqueeze(-1)
+    max_attn = self.channel_mlp(max_pool.squeeze(-1)).unsqueeze(-1)
+    channel_attn = torch.sigmoid(avg_attn + max_attn)     # shared MLP ✓
+    x = x * channel_attn
+
+    # ── Spatial attention ───────────────────────────────────────────
+    avg_sp = x.mean(dim=1, keepdim=True)                   # [B, 1, L]
+    max_sp = x.max(dim=1, keepdim=True)[0]                # [B, 1, L]
+    concat = torch.cat([avg_sp, max_sp], dim=1)           # [B, 2, L]
+    spatial_attn = torch.sigmoid(self.spatial_conv(concat))  # Conv1d(k=7) ✓
+    x = x * spatial_attn
+
+    return x
+```
+
+**Trong CNN-GRU-CBAM backbone (Section 1.3):**
+
+```
+Input: [batch, seq_len=8, feature_dim=79]
+  ↓ Conv1D(k=3, 32 filters) → GroupNorm → ReLU
+  ↓ Conv1D(k=5, 64 filters) → GroupNorm → ReLU
+  ↓ CBAM Channel Attention: σ(MLP(AvgPool) + MLP(MaxPool))
+  ↓ CBAM Spatial Attention: σ(Conv1d(k=7, [AvgPool; MaxPool]))
+  ↓ GRU(hidden=256, layers=2)
+  ↓ Mean Pool over seq_len
+  ↓ Linear → class logits
+```
+
+### 2.5 Training Stability: CosineAnnealing LR + GroupNorm
+
+#### 2.5.1 CosineAnnealing Learning Rate Scheduler
+
+**Lý thuyết:** CosineAnnealing giảm LR theo cosine curve từ $\eta_0$ xuống $\eta_{\min}$ qua $T_{\max}$ steps. Không giống như step decay (LR giảm đột ngột), cosine annealing tạo smooth, monotonic decay giúp training ổn định.
+
+**Công thức:**
+
+$$\eta_t = \eta_{\min} + \frac{1}{2}\left(\eta_0 - \eta_{\min}\right)\left(1 + \cos\left(\frac{\pi t}{T_{\max}}\right)\right)$$
+
+**Trong hệ thống (V3 config):**
+- `warmup_rounds = 3`: LR tăng từ `warmup_lr_start=5e-5` → `lr=1e-4`
+- Sau warmup: CosineAnnealing từ `1e-4` → `lr_min=1e-4 × 0.05 = 5e-6`
+
+**Ưu điểm:**
+- Smooth decay: không có sharp discontinuities như step LR
+- Long tail: LR giảm chậm ở cuối, cho phép fine-tuning
+- Warmup: ngăn policy collapse ở early rounds (V1 bug)
+
+```python
+# src/train.py — Warmup + CosineAnnealing LR
+actor_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer, T_max=total_rounds, eta_min=base_lr * cfg.ppo.lr_min_factor
+)
+# Warmup: linear increase for first warmup_rounds, then CosineAnnealing
+```
+
+#### 2.5.2 GroupNorm — Normalization for Small Batch
+
+**Lý thuyết:** GroupNorm (Wu & He, ECCV 2018) chia channels thành $G$ groups và normalize trong mỗi group. Độc lập với batch size — phù hợp với RL (batch size thường nhỏ).
+
+**So sánh các normalization methods:**
+
+| Method | Batch Independence | Small Batch | Memory | Sensitivity to Batch |
+|--------|-------------------|-------------|--------|----------------------|
+| BatchNorm | ❌ | ❌ | Low | Very High |
+| LayerNorm | ✅ | ✅ | Medium | None |
+| GroupNorm (G=1) | ✅ | ✅ | Medium | None |
+| GroupNorm (G=32) | ✅ | ✅ | Medium | None |
+
+**Trong CNNGRU-CBAM:**
+- `GroupNorm(1, 32)`: Normalize over all 32 channels (tương đương LayerNorm)
+- `GroupNorm(1, 64)`: Normalize over all 64 channels
+- **Không BatchNorm**: RL batch size thường < 32 → BatchNorm stats unreliable
+
+```python
+# src/models/networks.py — GroupNorm trong CNN backbone
+self.bn1 = nn.GroupNorm(1, cnn_channels[0])  # [batch, 32, seq_len] → normalize over batch+seq
+self.bn2 = nn.GroupNorm(1, cnn_channels[1])  # [batch, 64, seq_len]
+```
+
+#### 2.5.3 Entropy Regularization
+
+**Lý thuyết:** Thêm entropy của policy vào loss để khuyến khích exploration, tránh policy collapse vào deterministic action.
+
+**Công thức:**
+
+$$L_{\text{total}} = L_{\text{actor}} - c_{\text{entropy}} \cdot H(\pi_\theta)$$
+
+$$H(\pi) = -\sum_a \pi(a|s) \log \pi(a|s)$$
+
+**Trong hệ thống:**
+- `entropy_coef = 0.01`: small coefficient → không override actor loss
+- Target entropy: ~1.5-1.8 cho 7-class classification
+
+```python
+# src/agents/ppo_agent.py — Entropy bonus
+entropy = dist.entropy()  # H(π)
+actor_loss = -torch.min(surr1, surr2).mean() - self.cfg.entropy_coef * entropy.mean()
+```
+
+### 2.6 Universal Taxonomy: Multi-Dataset Support
+
+**Lý thuyết:** Thay vì train riêng model cho từng dataset (Edge-IIoT, NSL-KDD, IoMT, UNSW-NB15), hệ thống dùng **Universal 3-Class Taxonomy** để single model detect attacks trên tất cả environments.
+
+**Taxonomy:**
+
+| Universal Class | Edge-IIoT | NSL-KDD | IoMT 2024 | UNSW-NB15 |
+|----------------|-----------|---------|-----------|-----------|
+| **Benign (0)** | Benign Traffic | Normal | Benign | Normal |
+| **Attack (1)** | DDoS, Injection, Malware | DoS, R2L, U2R | DDoS, DoS, MITM, MQTT | Generic, Exploits, Fuzzers, Analysis, Backdoor, Shellcode, Worms |
+| **Recon (2)** | Reconnaissance | Probe | Recon | Reconnaissance |
+
+**Ưu điểm:**
+- **Single model**: Một model deploy được trên tất cả environments
+- **Domain adaptation**: Taxonomy capture structural similarities giữa các attacks
+- **Practical**: Edge devices chỉ cần load một model
+
+```python
+# src/config.py — Universal taxonomy
+UNIVERSAL_TAXONOMY = {
+    "Benign": 0,
+    "Attack": 1,
+    "Recon": 2,
+}
+UNIVERSAL_CLASS_NAMES = ["Benign", "Attack", "Recon"]
+
+# src/data/preprocessor.py — Automatic mapping
+def map_to_universal_taxonomy(df, dataset_name):
+    # Edge-IIoT: "DDoS HTTP Flood" → "Attack"
+    # NSL-KDD: "DoS" → "Attack", "Probe" → "Recon"
+```
+
+### 2.7 Architecture: Two-Tier Federated Design
+
+#### 2.7.1 Tier-1: Local PPO Agents
+
+Mỗi client chạy local PPO agent trên partition data. Agent gồm:
+- **CNNGRU-CBAM backbone**: Feature extraction từ network flows
+- **PPO update**: Policy optimization với clipped surrogate objective
+- **IDS Environment**: Gym-like interface với MCC-based reward
+
+```python
+# src/agents/local_client.py
+class LocalClient:
+    def __init__(self, client_id, X_train, y_train, ...):
+        self.env = MultiClassIDSEnvironment(X=X_train, y=y_train, ...)
+        self.ppo = PPOAgent(state_dim, action_dim, self.cfg)
+    
+    def train_local(self):
+        trajectory = self.env.run_episode(self.ppo)
+        self.ppo.update(*trajectory)
+        return self.ppo.get_model_update()
+```
+
+#### 2.7.2 Tier-2: RL Client Selector
+
+Bernoulli PPO agent quyết định chọn clients nào mỗi round. Chỉ nhận reward khi:
+1. Accuracy cải thiện (ΔAcc)
+2. Chọn ít clients hơn (communication efficiency)
+3. Tránh low-reputation clients
+
+```python
+# src/federated/client_selector.py — Selector reward
+R_t = ΔAcc - 0.5 * (|S_t| / K) - 1.0 * mean(1 - R_k for k in S_t)
+```
+
+#### 2.7.3 Central Server
+
+Server không train model trực tiếp. Chỉ:
+1. Nhận model updates từ clients
+2. Compute server update trên root dataset
+3. Chạy FLTrust aggregation
+4. Broadcast global model
+
+```python
+# src/federated/aggregator.py — 3-step aggregation
+# Step 1: FLTrust → trust scores
+# Step 2: Normalize → weights
+# Step 3: Weighted average → global model
+```
 
 ---
 

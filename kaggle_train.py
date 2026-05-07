@@ -35,7 +35,7 @@ DATASETS_TO_TRAIN = ["edge_iiot"]
 # Set RUN_MODE = "baseline" to run non-federated single-agent baseline
 # Set RUN_MODE = "federated" to run federated training (original)
 # Set RUN_MODE = "compare" to run both baseline + federated and compare
-RUN_MODE = "federated"            # <-- CHANGE THIS to switch modes
+RUN_MODE = "compare"            # <-- CHANGE THIS to switch modes
 BASELINE_ROUNDS = 40             # rounds for baseline (lower LR, slower convergence)
 
 # ══════════════════════════════════════════════════════════════
