@@ -603,7 +603,7 @@ class RLClientSelector:
         # FIX: Penalize if selector keeps picking the same clients (lock-in).
         # Track selection frequency and penalize repeated selections.
         if num_selected > 0:
-            self._selection_counts = self._selection_counts or [0] * self.num_clients
+            self._selection_counts = self._selection_counts if self._selection_counts is not None else [0] * self.num_clients
             for k in selected_indices:
                 self._selection_counts[k] += 1
             # Count how many of the selected clients are over-selected

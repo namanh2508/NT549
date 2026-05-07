@@ -765,8 +765,8 @@ if __name__ == "__main__":
                         choices=["edge_iiot", "nsl_kdd", "iomt_2024", "unsw_nb15", "unified"],
                         help="'unified' trains on all 4 datasets combined with universal 3-class taxonomy")
     parser.add_argument("--num_clients", type=int, default=10)
-    parser.add_argument("--num_rounds", type=int, default=10)
-    parser.add_argument("--local_episodes", type=int, default=5)
+    parser.add_argument("--num_rounds", type=int, default=100)
+    parser.add_argument("--local_episodes", type=int, default=8)
     parser.add_argument(
         "--max_steps_per_episode",
         type=int,

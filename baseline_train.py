@@ -160,7 +160,7 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 20):
     print(f"  LR schedule: warmup {warmup_rounds} rounds, then CosineAnnealing")
 
     # ── Training loop ────────────────────────────────────────────────────────
-    num_episodes = 8
+        num_episodes = cfg.training.local_episodes
     max_steps = min(len(X_train), cfg.training.max_steps_per_episode)
 
     print(f"\n[5/5] Training: {num_rounds} rounds, {num_episodes} eps/round, max_steps={max_steps}")
@@ -378,7 +378,7 @@ if __name__ == "__main__":
     NUM_ROUNDS = 20  # Slightly more since LR is lower
 
     print(f"Dataset: {cfg.training.dataset}")
-    print(f"Rounds: {NUM_ROUNDS}, Episodes/round: 8, Max steps: 2000")
+    print(f"Rounds: {NUM_ROUNDS}, Episodes/round: {cfg.training.local_episodes}, Max steps: {cfg.training.max_steps_per_episode}")
     print(f"Output: {cfg.training.output_dir}")
 
     baseline_history, final_metrics = run_baseline(cfg, num_rounds=NUM_ROUNDS)

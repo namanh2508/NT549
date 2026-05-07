@@ -182,15 +182,15 @@ class RewardConfig:
 
     # Multi-class reward parameters (MultiClassIDSEnvironment)
     tp_reward: float = 3.0          # reward for correct attack detection
-    tn_reward: float = 5.0          # reward for correct benign — critical for low FPR
+    tn_reward: float = 1.0          # reward for correct benign — critical for low FPR
     fp_penalty: float = 2.0         # penalty for false alarms
-    fn_penalty: float = 3.0         # penalty for missed attacks
-    balance_coef: float = 2.0       # balanced accuracy bonus
-    entropy_coef: float = 2.0       # prediction diversity bonus
-    hhi_coef: float = 2.5          # HHI bias penalty
-    collapse_thr: float = 0.65     # trigger when single class > 65%
-    collapse_pen: float = 20.0     # penalty when collapse detected
-    macro_f1_coef: float = 5.0     # macro F1 reward
+    fn_penalty: float = 4.0         # penalty for missed attacks
+    balance_coef: float = 1.0       # balanced accuracy bonus
+    entropy_coef: float = 1.0       # prediction diversity bonus
+    hhi_coef: float = 1.0          # HHI bias penalty
+    collapse_thr: float = 0.70     # trigger when single class > 65%
+    collapse_pen: float = 15.0     # penalty when collapse detected
+    macro_f1_coef: float = 3.0     # macro F1 reward
     class_weight_cap: float = 3.0   # fallback cap if no class imbalance
     adaptive_cap: float = 50.0      # max cap for highly imbalanced datasets
     focal_gamma: float = 2.0        # focal loss gamma for PPO
@@ -212,20 +212,20 @@ class NetworkConfig:
 @dataclass
 class PPOConfig:
     """PPO hyper-parameters."""
-    lr_actor: float = 3e-4
-    lr_critic: float = 1e-3
+    lr_actor: float = 1e-4
+    lr_critic: float = 5e-4
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    clip_epsilon: float = 0.2
+    clip_epsilon: float = 0.1
     entropy_coef: float = 0.01          # base entropy; auto-scaled by num_classes
     value_coef: float = 0.5
     max_grad_norm: float = 0.5
-    ppo_epochs: int = 4
-    mini_batch_size: int = 64
+    ppo_epochs: int = 8
+    mini_batch_size: int = 128
     hidden_dim: int = 256
     action_dim: int = 1  # continuous confidence score per sample
     lr_scheduler_enabled: bool = True   # cosine annealing LR to prevent forgetting
-    lr_min_factor: float = 0.1          # minimum LR = base_lr * lr_min_factor
+    lr_min_factor: float = 0.05         # minimum LR = base_lr * lr_min_factor
     lr_warmup_rounds: int = 5           # warmup rounds before cosine decay
 
 
@@ -285,8 +285,8 @@ class FedTrustAttentionConfig:
 class TrainingConfig:
     """Overall training configuration."""
     num_clients: int = 10
-    num_rounds: int = 10           # federated rounds
-    local_episodes: int = 5         # local RL episodes per round
+    num_rounds: int = 100          # federated rounds
+    local_episodes: int = 8         # local RL episodes per round
     batch_size: int = 256
     max_steps_per_episode: int = 2000
     eval_interval: int = 10
