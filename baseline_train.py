@@ -160,7 +160,7 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 20):
     print(f"  LR schedule: warmup {warmup_rounds} rounds, then CosineAnnealing")
 
     # ── Training loop ────────────────────────────────────────────────────────
-        num_episodes = cfg.training.local_episodes
+    num_episodes = cfg.training.local_episodes
     max_steps = min(len(X_train), cfg.training.max_steps_per_episode)
 
     print(f"\n[5/5] Training: {num_rounds} rounds, {num_episodes} eps/round, max_steps={max_steps}")
