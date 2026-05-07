@@ -39,7 +39,7 @@ import torch
 import numpy as np
 from typing import Dict, List
 
-from src.config import Config, RewardConfig, PPOConfig
+from src.config import Config
 from src.data.preprocessor import load_dataset
 from src.agents.ppo_agent import PPOAgent
 from src.environment.ids_env import MultiClassIDSEnvironment
@@ -70,67 +70,7 @@ def evaluate_model(
     return {**multi_metrics, "fpr": binary_fpr}
 
 
-def create_fixed_reward_config():
-    """
-    Create a FIXED reward config based on the original but with corrections.
-
-    Key fixes from V1 baseline analysis:
-      - TN_REWARD: 5.0 → 1.0  (was 67% higher than TP_REWARD, causing FPR=1.0 collapse)
-        In Edge-IIoT (~78% attack), predicting all-Benign gives high TN rewards
-        but destroys recall. With TN=1.0, the model must actually learn attack patterns.
-      - TP_REWARD: kept at 3.0
-      - FN penalty boosted: 3.0 * 2.0 = 6.0 (missing attacks is worst outcome in IDS)
-      - FN_PENALTY from 3.0 → 4.0 (stronger signal to detect attacks)
-    """
-    r = RewardConfig()
-    r.tp_reward = 3.0
-    r.tn_reward = 1.0       # FIX 1: was 5.0 — prevents over-predicting Benign
-    r.fp_penalty = 2.0
-    r.fn_penalty = 4.0       # FIX 2: was 3.0 — stronger FN signal
-    r.fn_weight_boost = 1.0  # Already doubled in fn_penalty above
-    r.balance_coef = 1.0     # Reduced from 2.0 — less competing with MCC
-    r.entropy_coef = 1.0     # Reduced from 2.0
-    r.hhi_coef = 1.0         # Reduced from 2.5
-    r.collapse_thr = 0.70    # More tolerant before collapse penalty kicks in
-    r.collapse_pen = 15.0   # Reduced from 20.0
-    r.macro_f1_coef = 3.0    # Reduced from 5.0
-    r.mcc_coef = 5.0         # Keep MCC as primary signal
-    r.focal_gamma = 2.0
-    r.class_weight_cap = 3.0
-    r.adaptive_cap = 50.0
-    r.delta = 0.1            # Reduced latency weight
-    return r
-
-
-def create_fixed_ppo_config(num_rounds: int):
-    """
-    Create a FIXED PPO config with better stability.
-
-    Key fixes:
-      - Lower LR: 3e-4 → 1e-4 (prevents oscillation over 30 rounds)
-      - More epochs: 4 → 8 (better sample efficiency per update)
-      - Larger mini_batch: 64 → 128 (more stable gradients)
-      - LR scheduler: CosineAnnealingWarmRestarts (better for non-stationary)
-      - Entropy coefficient: keep at 0.01 (prevent premature collapse)
-    """
-    p = PPOConfig()
-    p.lr_actor = 1e-4        # FIX 3: was 3e-4 — lower LR prevents oscillation
-    p.lr_critic = 5e-4       # FIX 4: was 1e-3 — lower critic LR
-    p.gamma = 0.99
-    p.gae_lambda = 0.95
-    p.clip_epsilon = 0.1      # V3 fix: was 0.15 — tighter clip prevents oscillation
-    p.entropy_coef = 0.01    # Keep low but positive to prevent collapse
-    p.value_coef = 0.5
-    p.max_grad_norm = 0.5
-    p.ppo_epochs = 8         # FIX 6: was 4 — more updates per rollout
-    p.mini_batch_size = 128  # FIX 7: was 64 — larger batches = stable gradients
-    p.hidden_dim = 256
-    p.lr_scheduler_enabled = True
-    p.lr_min_factor = 0.05   # FIX 8: was 0.1 — allow LR to decay more
-    return p
-
-
-def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
+def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 20):
     """
     Train a single PPO agent on the full (non-partitioned) dataset.
     V3: With supervised pretraining + reward/PPO stability fixes.
@@ -159,31 +99,30 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
     for c in range(num_classes):
         print(f"    Class {c}: {class_counts[c]} ({100*class_counts[c]/len(y_train):.1f}%)")
 
-    # ── Fixed reward and PPO config ─────────────────────────────────────────
-    print("\n[2/5] Creating FIXED reward and PPO configs...")
-    fixed_reward_cfg = create_fixed_reward_config()
-    fixed_ppo_cfg = create_fixed_ppo_config(num_rounds)
-
-    print(f"  TN_REWARD: {fixed_reward_cfg.tn_reward} (was 5.0 → FIX FPR=1.0)")
-    print(f"  FN_PENALTY: {fixed_reward_cfg.fn_penalty} (was 3.0 → stronger attack signal)")
-    print(f"  lr_actor: {fixed_ppo_cfg.lr_actor} (was 3e-4 → prevent oscillation)")
-    print(f"  clip_epsilon: {fixed_ppo_cfg.clip_epsilon} (was 0.2 → tighter)")
-    print(f"  ppo_epochs: {fixed_ppo_cfg.ppo_epochs} (was 4 → more updates)")
-    print(f"  mini_batch: {fixed_ppo_cfg.mini_batch_size} (was 64 → stable gradients)")
+    # ── Use cfg.ppo and cfg.reward (set by apply_v3_config in kaggle_train.py) ──
+    print("\n[2/5] Using reward and PPO configs from cfg...")
+    print(f"  TN_REWARD: {cfg.reward.tn_reward}")
+    print(f"  FN_PENALTY: {cfg.reward.fn_penalty}")
+    print(f"  lr_actor: {cfg.ppo.lr_actor}")
+    print(f"  clip_epsilon: {cfg.ppo.clip_epsilon}")
+    print(f"  ppo_epochs: {cfg.ppo.ppo_epochs}")
+    print(f"  mini_batch: {cfg.ppo.mini_batch_size}")
+    print(f"  warmup_rounds: {cfg.ppo.lr_warmup_rounds}")
+    print(f"  lr_min_factor: {cfg.ppo.lr_min_factor}")
 
     # ── Create environment and agent ─────────────────────────────────────────
     print("\n[3/5] Initialising environment and PPO agent...")
     env = MultiClassIDSEnvironment(
         X=X_train,
         y=y_train,
-        reward_cfg=fixed_reward_cfg,
+        reward_cfg=cfg.reward,
         num_classes=num_classes,
     )
 
     agent = PPOAgent(
         state_dim=state_dim,
         action_dim=action_dim,
-        cfg=fixed_ppo_cfg,
+        cfg=cfg.ppo,
         device=device,
         dataset=cfg.training.dataset,
     )
@@ -202,12 +141,12 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
     print(f"  Pretrain Accuracy: {pretrain_info['pretrain_accuracy']:.4f}")
 
     # ── LR warmup + CosineAnnealing ─────────────────────────────────────────
-    warmup_rounds = 3
-    warmup_lrs_actor = np.linspace(5e-5, fixed_ppo_cfg.lr_actor, warmup_rounds)
-    warmup_lrs_critic = np.linspace(5e-5, fixed_ppo_cfg.lr_critic, warmup_rounds)
+    warmup_rounds = cfg.ppo.lr_warmup_rounds
+    warmup_lrs_actor = np.linspace(5e-5, cfg.ppo.lr_actor, warmup_rounds)
+    warmup_lrs_critic = np.linspace(5e-5, cfg.ppo.lr_critic, warmup_rounds)
 
-    min_lr_actor = fixed_ppo_cfg.lr_actor * fixed_ppo_cfg.lr_min_factor
-    min_lr_critic = fixed_ppo_cfg.lr_critic * fixed_ppo_cfg.lr_min_factor
+    min_lr_actor = cfg.ppo.lr_actor * cfg.ppo.lr_min_factor
+    min_lr_critic = cfg.ppo.lr_critic * cfg.ppo.lr_min_factor
     agent.actor_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         agent.actor_optim,
         T_max=num_rounds - warmup_rounds,
@@ -436,7 +375,7 @@ if __name__ == "__main__":
     cfg.training.sample_limit_per_file = 50000
     os.makedirs(cfg.training.output_dir, exist_ok=True)
 
-    NUM_ROUNDS = 40  # Slightly more since LR is lower
+    NUM_ROUNDS = 20  # Slightly more since LR is lower
 
     print(f"Dataset: {cfg.training.dataset}")
     print(f"Rounds: {NUM_ROUNDS}, Episodes/round: 8, Max steps: 2000")
