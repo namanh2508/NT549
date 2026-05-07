@@ -294,6 +294,100 @@ class PPOAgent:
             "entropy": total_entropy / num_updates,
         }
 
+    def supervised_pretrain(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        class_weights: Optional[np.ndarray] = None,
+        num_epochs: int = 3,
+        batch_size: int = 256,
+        lr: float = 1e-3,
+    ) -> Dict[str, float]:
+        """
+        Supervised pretraining using cross-entropy loss to warm up the policy.
+
+        This gives the RL agent a strong starting point instead of random init.
+        Args:
+            X: training features [N, state_dim]
+            y: training labels [N] (class indices)
+            class_weights: [num_classes] for weighted CE loss
+            num_epochs: pretraining epochs
+            batch_size: training batch size
+            lr: learning rate (separate from PPO LR)
+        Returns:
+            dict of pretraining metrics
+        """
+        from torch.utils.data import TensorDataset, DataLoader
+
+        states = torch.FloatTensor(X.astype(np.float32)).to(self.device)
+        labels = torch.LongTensor(y).to(self.device)
+
+        dataset = TensorDataset(states, labels)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+
+        if class_weights is not None:
+            cw_t = torch.FloatTensor(class_weights).to(self.device)
+            criterion = nn.CrossEntropyLoss(weight=cw_t)
+        else:
+            criterion = nn.CrossEntropyLoss()
+
+        optim = torch.optim.Adam(
+            list(self.actor.parameters()) + list(self.critic.parameters()),
+            lr=lr,
+        )
+
+        total_ce_loss = 0.0
+        total_acc = 0.0
+        total_samples = 0
+
+        self.actor.train()
+        self.critic.train()
+
+        for epoch in range(num_epochs):
+            epoch_loss = 0.0
+            epoch_correct = 0
+            epoch_total = 0
+
+            for batch_states, batch_labels in dataloader:
+                optim.zero_grad()
+
+                logits = self.actor(batch_states)           # [B, num_classes]
+                values = self.critic(batch_states)          # [B]
+
+                ce_loss = criterion(logits, batch_labels)
+
+                preds = logits.argmax(dim=-1)
+                correct = (preds == batch_labels).sum().item()
+                batch_acc = correct / len(batch_labels)
+
+                critic_labels = (batch_labels.float() / (self.action_dim - 1)) * 2 - 1  # normalise to [-1, 1]
+                critic_loss = nn.MSELoss()(values.squeeze(), critic_labels)
+
+                loss = ce_loss + 0.5 * critic_loss
+
+                loss.backward()
+                nn.utils.clip_grad_norm_(self.actor.parameters(), self.cfg.max_grad_norm)
+                nn.utils.clip_grad_norm_(self.critic.parameters(), self.cfg.max_grad_norm)
+                optim.step()
+
+                epoch_loss += ce_loss.item() * len(batch_labels)
+                epoch_correct += correct
+                epoch_total += len(batch_labels)
+
+            avg_ce = epoch_loss / max(epoch_total, 1)
+            avg_acc = epoch_correct / max(epoch_total, 1)
+            total_ce_loss += avg_ce
+            total_acc += avg_acc
+            total_samples += epoch_total
+
+        self.actor.train()
+        self.critic.train()
+
+        return {
+            "pretrain_ce_loss": total_ce_loss / max(num_epochs, 1),
+            "pretrain_accuracy": total_acc / max(num_epochs, 1),
+        }
+
     # ─── Model state management ────────────
 
     def get_model_state(self) -> OrderedDict:

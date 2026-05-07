@@ -226,6 +226,7 @@ class PPOConfig:
     action_dim: int = 1  # continuous confidence score per sample
     lr_scheduler_enabled: bool = True   # cosine annealing LR to prevent forgetting
     lr_min_factor: float = 0.1          # minimum LR = base_lr * lr_min_factor
+    lr_warmup_rounds: int = 5           # warmup rounds before cosine decay
 
 
 @dataclass
@@ -301,7 +302,7 @@ class TrainingConfig:
     client_selection_enabled: bool = True
     clients_per_round: int = 8          # K_sel: number of clients selected per round
     selector_hidden_dim: int = 128
-    selector_eval_interval: int = 5    # update selector every N rounds
+    selector_eval_interval: int = 3    # update selector every N rounds
 
 
 @dataclass

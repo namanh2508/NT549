@@ -133,11 +133,11 @@ def create_fixed_ppo_config(num_rounds: int):
 def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
     """
     Train a single PPO agent on the full (non-partitioned) dataset.
-    V2: With reward and PPO stability fixes.
+    V3: With supervised pretraining + reward/PPO stability fixes.
     """
     print("=" * 70)
     print("  BASELINE V3: Single PPO Agent (No Federation)")
-    print("  Key fixes: TN_REWARD=1.0, lower LR, tighter clip, advantage norm")
+    print("  Key fixes: Supervised pretrain, TN_REWARD=1.0, lower LR, tighter clip")
     print("=" * 70)
 
     device = torch.device(
@@ -146,7 +146,7 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
     print(f"Device: {device}")
 
     # ── Load data ────────────────────────────────────────────────────────────
-    print("\n[1/4] Loading dataset...")
+    print("\n[1/5] Loading dataset...")
     X_train, X_test, y_train, y_test, le = load_dataset(cfg)
     num_classes = len(le.classes_)
     state_dim = X_train.shape[1]
@@ -160,7 +160,7 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
         print(f"    Class {c}: {class_counts[c]} ({100*class_counts[c]/len(y_train):.1f}%)")
 
     # ── Fixed reward and PPO config ─────────────────────────────────────────
-    print("\n[2/4] Creating FIXED reward and PPO configs...")
+    print("\n[2/5] Creating FIXED reward and PPO configs...")
     fixed_reward_cfg = create_fixed_reward_config()
     fixed_ppo_cfg = create_fixed_ppo_config(num_rounds)
 
@@ -172,7 +172,7 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
     print(f"  mini_batch: {fixed_ppo_cfg.mini_batch_size} (was 64 → stable gradients)")
 
     # ── Create environment and agent ─────────────────────────────────────────
-    print("\n[3/4] Initialising environment and PPO agent...")
+    print("\n[3/5] Initialising environment and PPO agent...")
     env = MultiClassIDSEnvironment(
         X=X_train,
         y=y_train,
@@ -188,12 +188,24 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
         dataset=cfg.training.dataset,
     )
 
-    # LR warmup + CosineAnnealing
+    # ── Supervised Pretraining (warm up policy with CE loss) ─────────────────────
+    print("\n[4/5] Supervised Pretraining (CE loss, 3 epochs)...")
+    pretrain_info = agent.supervised_pretrain(
+        X=X_train,
+        y=y_train,
+        class_weights=env._class_weights,
+        num_epochs=3,
+        batch_size=256,
+        lr=1e-3,
+    )
+    print(f"  Pretrain CE Loss: {pretrain_info['pretrain_ce_loss']:.4f}")
+    print(f"  Pretrain Accuracy: {pretrain_info['pretrain_accuracy']:.4f}")
+
+    # ── LR warmup + CosineAnnealing ─────────────────────────────────────────
     warmup_rounds = 3
-    warmup_lrs_actor = np.linspace(5e-5, fixed_ppo_cfg.lr_actor, warmup_rounds)  # V3 fix: was 1e-5
+    warmup_lrs_actor = np.linspace(5e-5, fixed_ppo_cfg.lr_actor, warmup_rounds)
     warmup_lrs_critic = np.linspace(5e-5, fixed_ppo_cfg.lr_critic, warmup_rounds)
 
-    # Cosine annealing from round warmup_rounds onwards
     min_lr_actor = fixed_ppo_cfg.lr_actor * fixed_ppo_cfg.lr_min_factor
     min_lr_critic = fixed_ppo_cfg.lr_critic * fixed_ppo_cfg.lr_min_factor
     agent.actor_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -209,10 +221,10 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
     print(f"  LR schedule: warmup {warmup_rounds} rounds, then CosineAnnealing")
 
     # ── Training loop ────────────────────────────────────────────────────────
-    num_episodes = 8  # FIX: was 5 — more episodes per round = less variance
+    num_episodes = 8
     max_steps = min(len(X_train), cfg.training.max_steps_per_episode)
 
-    print(f"\n[4/4] Training: {num_rounds} rounds, {num_episodes} eps/round, max_steps={max_steps}")
+    print(f"\n[5/5] Training: {num_rounds} rounds, {num_episodes} eps/round, max_steps={max_steps}")
     print("-" * 80)
 
     history = {
@@ -229,6 +241,8 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
         "entropies": [],
         "lr_actor": [],
         "ema_accuracy": [],
+        "pretrain_ce_loss": pretrain_info["pretrain_ce_loss"],
+        "pretrain_accuracy": pretrain_info["pretrain_accuracy"],
     }
 
     best_accuracy = 0.0
@@ -344,8 +358,9 @@ def run_baseline(cfg: Config, output_suffix: str = "", num_rounds: int = 30):
 
     # ── Final summary ────────────────────────────────────────────────────────
     print("\n" + "=" * 80)
-    print("  BASELINE V3 TRAINING COMPLETE")
+    print("  BASELINE V3 TRAINING COMPLETE (with supervised pretrain)")
     print("=" * 80)
+    print(f"  Pretrain: CE={pretrain_info['pretrain_ce_loss']:.4f}, Acc={pretrain_info['pretrain_accuracy']:.4f}")
     print(f"  Best Accuracy: {best_accuracy:.4f}")
     print(f"  Final Round Metrics:")
     print(f"    Accuracy:   {history['accuracy'][-1]:.4f}")
@@ -398,8 +413,9 @@ def compare_with_federated(baseline_history: Dict, federated_path: str):
     metrics = ["accuracy", "precision", "recall", "f1_score", "f1_macro"]
     for m in metrics:
         b_final = baseline_history[m][-1] if baseline_history.get(m) else 0.0
-        fed_vals = fed.get(m if m != "f1_score" else "f1", [])
-        f_final = fed_vals[-1] if fed_vals else 0.0
+        fed_key = m if m != "f1_score" else "f1"
+        fed_vals = fed.get(fed_key, [])
+        f_final = float(fed_vals[-1]) if fed_vals is not None and len(fed_vals) > 0 else 0.0
         delta = b_final - f_final
         sign = "+" if delta >= 0 else ""
         print(f"  {m:<15} {b_final:>12.4f} {f_final:>12.4f} {sign}{delta:>11.4f}")

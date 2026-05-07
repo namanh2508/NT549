@@ -264,9 +264,20 @@ class RLClientSelector:
        Neither interferes with the other's job.
     """
 
-    # Reward coefficients — tuned for the new objective
-    DEFAULT_LAMBDA = 0.5   # communication cost weight
-    DEFAULT_GAMMA = 1.0    # untrusted-penalty weight
+    # Reward coefficients — rebalanced for accuracy-priority over communication savings.
+    # FIX: Prior design had lambda_comm=0.5, gamma_untrusted=1.0, which overly penalized
+    # selecting many clients and trusting low-reputation clients, leading to lock-in on
+    # 3 clients (4, 7, 9) and degradation of global model.
+    #
+    # New balance:
+    # - lambda_comm: 0.2 (reduced from 0.5) — prioritize accuracy over bandwidth savings
+    # - gamma_untrusted: 0.5 (reduced from 1.0) — trust FLTrust less aggressively
+    # - delta_acc: explicitly scaled as 5x weight to make accuracy improvement dominant
+    #
+    # New reward formula:
+    #   R_t = 5.0 * ΔAcc_global − 0.2 * (|S_t| / K) − 0.5 * mean(1 − R_k)
+    DEFAULT_LAMBDA = 0.2   # communication cost weight (was 0.5)
+    DEFAULT_GAMMA = 0.5    # untrusted-penalty weight (was 1.0)
 
     def __init__(
         self,
@@ -295,6 +306,43 @@ class RLClientSelector:
             self.critic.parameters(), lr=cfg.lr_critic if cfg else 1e-3,
         )
 
+        # LR scheduler: warmup + cosine decay
+        # Selector gets ~total_rounds/selector_eval_interval updates
+        self.selector_warmup = cfg.lr_warmup_rounds if cfg else 5
+        self.selector_total_updates = max(1, total_rounds // 3)  # ~33 updates for 100 rounds, eval_interval=3
+        self.actor_scheduler = None
+        self.critic_scheduler = None
+        if cfg and getattr(cfg, 'lr_scheduler_enabled', True):
+            warmup_factor = 0.1  # start at 10% of base LR
+            self.actor_scheduler = torch.optim.lr_scheduler.SequentialLR(
+                self.actor_optim,
+                schedulers=[
+                    torch.optim.lr_scheduler.LinearLR(
+                        self.actor_optim, start_factor=warmup_factor, total_iters=self.selector_warmup
+                    ),
+                    torch.optim.lr_scheduler.CosineAnnealingLR(
+                        self.actor_optim,
+                        T_max=self.selector_total_updates - self.selector_warmup,
+                        eta_min=cfg.lr_actor * 0.05
+                    ),
+                ],
+                milestones=[self.selector_warmup],
+            )
+            self.critic_scheduler = torch.optim.lr_scheduler.SequentialLR(
+                self.critic_optim,
+                schedulers=[
+                    torch.optim.lr_scheduler.LinearLR(
+                        self.critic_optim, start_factor=warmup_factor, total_iters=self.selector_warmup
+                    ),
+                    torch.optim.lr_scheduler.CosineAnnealingLR(
+                        self.critic_optim,
+                        T_max=self.selector_total_updates - self.selector_warmup,
+                        eta_min=cfg.lr_critic * 0.05
+                    ),
+                ],
+                milestones=[self.selector_warmup],
+            )
+
         self.buffer = SelectorRolloutBuffer()
 
         # Historical F1 EMA per client
@@ -304,6 +352,9 @@ class RLClientSelector:
         # Previous round tracking
         self._prev_global_accuracy: float = 0.0
         self._prev_trust_scores: List[float] = [1.0 / num_clients] * num_clients
+
+        # Lock-in prevention: track how many times each client has been selected
+        self._selection_counts: List[int] = [0] * num_clients
 
         # Reward coefficients
         self.lambda_comm = self.DEFAULT_LAMBDA
@@ -509,12 +560,17 @@ class RLClientSelector:
         """
         Resource-Efficiency Reward Function.
 
-        R_t = ΔAcc_global − λ · (|S_t| / K) − γ · mean_{k∈S_t}(1 − R_k)
+        R_t = w_acc · ΔAcc_global − λ · (|S_t| / K) − γ · mean_{k∈S_t}(1 − R_k)
 
         where:
+          w_acc = 5.0  : explicit accuracy improvement weight (dominates other terms)
           ΔAcc_global : improvement in global model accuracy vs previous round
           |S_t| / K   : fraction of clients selected (communication cost proxy)
           (1 − R_k)   : how untrusted client k is according to FLTrust
+
+        FIX: Prior design had implicit ΔAcc weight=1.0, which was too small relative to
+        the penalty terms. This caused the selector to optimize for communication savings
+        rather than accuracy improvement, leading to lock-in on 3 clients and degradation.
 
         This cleanly separates concerns:
           - FLTrust decides "how much to trust each client" → appears in R_k
@@ -522,8 +578,12 @@ class RLClientSelector:
         """
         eps = 1e-8
 
-        # 1. Accuracy improvement (primary objective)
+        # Accuracy improvement weight — make accuracy dominant over other terms
+        w_acc = 5.0
+
+        # 1. Accuracy improvement (primary objective) — weighted 5x
         delta_global = global_accuracy - self._prev_global_accuracy
+        acc_reward = w_acc * delta_global
 
         # 2. Communication cost penalty — reward FEWER selections
         num_selected = len(selected_indices)
@@ -537,7 +597,24 @@ class RLClientSelector:
             mean_untrusted = 0.0
         untrusted_penalty = self.gamma_untrusted * mean_untrusted
 
-        reward = delta_global - comm_penalty - untrusted_penalty
+        reward = acc_reward - comm_penalty - untrusted_penalty
+
+        # ── Diversity bonus ──────────────────────────────────────────────────────
+        # FIX: Penalize if selector keeps picking the same clients (lock-in).
+        # Track selection frequency and penalize repeated selections.
+        if num_selected > 0:
+            self._selection_counts = self._selection_counts or [0] * self.num_clients
+            for k in selected_indices:
+                self._selection_counts[k] += 1
+            # Count how many of the selected clients are over-selected
+            mean_count = sum(self._selection_counts) / max(1, len([c for c in self._selection_counts if c > 0]))
+            over_selected = sum(
+                1 for k in selected_indices
+                if self._selection_counts[k] > mean_count * 1.5  # 50% above average
+            )
+            if over_selected > 0:
+                diversity_penalty = 0.1 * (over_selected / num_selected)
+                reward -= diversity_penalty
 
         return reward
 
@@ -711,6 +788,12 @@ class RLClientSelector:
                 total_critic_loss += critic_loss.item()
                 total_entropy += ent.item()
 
+        # Step LR schedulers after PPO update
+        if self.actor_scheduler is not None:
+            self.actor_scheduler.step()
+        if self.critic_scheduler is not None:
+            self.critic_scheduler.step()
+
         self.buffer.clear()
 
         num_updates = max(1, self.ppo_epochs * (dataset_size // self.cfg.mini_batch_size))
@@ -730,6 +813,10 @@ class RLClientSelector:
             state[f"selector_actor.{k}"] = v.clone()
         for k, v in self.critic.state_dict().items():
             state[f"selector_critic.{k}"] = v.clone()
+        if self.actor_scheduler is not None:
+            state["selector_actor_scheduler"] = self.actor_scheduler.state_dict()
+        if self.critic_scheduler is not None:
+            state["selector_critic_scheduler"] = self.critic_scheduler.state_dict()
         return state
 
     def set_state(self, state: OrderedDict):
@@ -745,3 +832,7 @@ class RLClientSelector:
             self.actor.load_state_dict(actor_state)
         if critic_state:
             self.critic.load_state_dict(critic_state)
+        if self.actor_scheduler is not None and "selector_actor_scheduler" in state:
+            self.actor_scheduler.load_state_dict(state["selector_actor_scheduler"])
+        if self.critic_scheduler is not None and "selector_critic_scheduler" in state:
+            self.critic_scheduler.load_state_dict(state["selector_critic_scheduler"])

@@ -866,22 +866,92 @@ def partition_data_non_iid(
 
 def create_root_dataset(
     X: np.ndarray, y: np.ndarray, size: int = 200,
-    balanced: bool = True, seed: int = 42
+    balanced: bool = True, seed: int = 42,
+    client_partitions: List[Tuple[np.ndarray, np.ndarray]] = None,
+    heterogeneity_weight: float = 0.5,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Create a small clean root dataset for FLTrust."""
+    """
+    Create a small root dataset for FLTrust.
+
+    FIX: Prior design sampled from global center (full dataset), causing FLTrust
+    to favor clients whose distributions align with the global center, leading
+    to trust lock-in on a subset of clients (4, 7, 9) and ignoring heterogeneous
+    edge clients (1, 3).
+
+    NEW DESIGN: Blend global-center samples with client-heterogeneity samples.
+    - (1 - heterogeneity_weight): balanced global-center samples
+    - heterogeneity_weight: samples drawn from each client's distribution
+
+    This ensures Root Dataset represents the FULL heterogeneous IoT environment,
+    not just the "average" client. FLTrust then evaluates clients based on
+    how well their gradients align with ALL environments, not just the center.
+
+    Args:
+        X, y: Full dataset (used for global-center samples)
+        size: Total root dataset size
+        balanced: Balanced per-class sampling
+        seed: Random seed
+        client_partitions: List of (X_k, y_k) tuples from Non-IID partition.
+                           If provided, heterogeneity_weight samples are drawn from here.
+        heterogeneity_weight: Fraction of root samples from client distributions (0.0-1.0).
+                              Higher = more diverse, less centered.
+    """
     rng = np.random.RandomState(seed)
-    if balanced:
+    root_samples = []
+    root_labels = []
+
+    # 1. Global-center samples (balanced, represents the "average" distribution)
+    global_size = int(size * (1.0 - heterogeneity_weight))
+    if global_size > 0 and balanced:
         classes = np.unique(y)
-        per_class = max(1, size // len(classes))
+        per_class = max(1, global_size // len(classes))
         indices = []
         for c in classes:
             c_idx = np.where(y == c)[0]
             chosen = rng.choice(c_idx, size=min(per_class, len(c_idx)), replace=False)
             indices.append(chosen)
         indices = np.concatenate(indices)
-    else:
-        indices = rng.choice(len(X), size=min(size, len(X)), replace=False)
-    return X[indices], y[indices]
+        root_samples.append(X[indices])
+        root_labels.append(y[indices])
+    elif global_size > 0:
+        indices = rng.choice(len(X), size=min(global_size, len(X)), replace=False)
+        root_samples.append(X[indices])
+        root_labels.append(y[indices])
+
+    # 2. Client-heterogeneity samples (represents edge/non-IID distributions)
+    hetero_size = size - (len(root_samples[0]) if root_samples else 0)
+    if hetero_size > 0 and client_partitions:
+        hetero_per_client = hetero_size // len(client_partitions)
+        for X_k, y_k in client_partitions:
+            if len(X_k) == 0:
+                continue
+            if balanced:
+                classes_k = np.unique(y_k)
+                per_class_k = max(1, hetero_per_client // len(classes_k))
+                indices_k = []
+                for c in classes_k:
+                    c_idx = np.where(y_k == c)[0]
+                    chosen = rng.choice(c_idx, size=min(per_class_k, len(c_idx)), replace=False)
+                    indices_k.append(chosen)
+                if indices_k:
+                    indices_k = np.concatenate(indices_k)
+                    root_samples.append(X_k[indices_k])
+                    root_labels.append(y_k[indices_k])
+            else:
+                n = min(hetero_per_client, len(X_k))
+                idx = rng.choice(len(X_k), size=n, replace=False)
+                root_samples.append(X_k[idx])
+                root_labels.append(y_k[idx])
+
+    if not root_samples:
+        return X[:size], y[:size]
+
+    X_root = np.concatenate(root_samples, axis=0)
+    y_root = np.concatenate(root_labels, axis=0)
+
+    # Shuffle
+    perm = rng.permutation(len(X_root))
+    return X_root[perm], y_root[perm]
 
 
 def load_dataset(cfg: Config):

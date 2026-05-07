@@ -112,6 +112,7 @@ def save_checkpoint(
     best_accuracy: float,
     lr_states: Optional[Dict] = None,
     selector_state: Optional[OrderedDict] = None,
+    selector_scheduler_state: Optional[Dict] = None,
 ):
     """Save a full training checkpoint so training can be resumed."""
     ckpt = {
@@ -127,6 +128,8 @@ def save_checkpoint(
         ckpt["lr_states"] = lr_states
     if selector_state is not None:
         ckpt["selector_state"] = selector_state
+    if selector_scheduler_state is not None:
+        ckpt["selector_scheduler_state"] = selector_scheduler_state
     torch.save(ckpt, filepath)
 
 
@@ -173,17 +176,11 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
     cfg.ppo.entropy_coef = min(adaptive_entropy, 0.1)  # cap at 0.1
     print(f"  Adaptive entropy coef: {cfg.ppo.entropy_coef:.4f} (num_classes={num_classes})")
 
-    # ── Create root dataset for FLTrust ──
-    print("[2/5] Creating root dataset & partitioning data...")
-    X_root, y_root = create_root_dataset(
-        X_train, y_train,
-        size=cfg.fed_trust.root_dataset_size,
-        balanced=cfg.fed_trust.root_dataset_per_class,
-        seed=cfg.training.seed,
-    )
-    print(f"  Root dataset: {len(X_root)} samples")
-
     # ── Partition data (non-IID for realistic healthcare setting) ──
+    # IMPORTANT: Partition FIRST, then create root dataset from client distributions.
+    # This ensures Root Dataset represents the FULL heterogeneous environment,
+    # not just the "global center" — preventing FLTrust trust lock-in.
+    print("[2/5] Partitioning data (Non-IID)...")
     partitions = partition_data_non_iid(
         X_train, y_train,
         num_clients=cfg.training.num_clients,
@@ -192,6 +189,22 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
     for i, (xp, yp) in enumerate(partitions):
         unique, counts = np.unique(yp, return_counts=True)
         print(f"  Client {i}: {len(xp)} samples, classes: {dict(zip(unique, counts))}")
+
+    # ── Create root dataset for FLTrust ──
+    # FIX: Pass client partitions so root dataset includes heterogeneous edge distributions.
+    # This prevents FLTrust from always favoring global-center-aligned clients.
+    print("[2/5b] Creating heterogeneous root dataset for FLTrust...")
+    X_root, y_root = create_root_dataset(
+        X_train, y_train,
+        size=cfg.fed_trust.root_dataset_size,
+        balanced=cfg.fed_trust.root_dataset_per_class,
+        seed=cfg.training.seed,
+        client_partitions=partitions,
+        heterogeneity_weight=0.4,  # 40% from client distributions, 60% global center
+    )
+    print(f"  Root dataset: {len(X_root)} samples (heterogeneous blend)")
+    unique_root, counts_root = np.unique(y_root, return_counts=True)
+    print(f"  Root class dist: {dict(zip(unique_root, counts_root))}")
 
     # ── Create local clients (Tier 1) ──
     print("[3/5] Initialising clients & federated components...")
@@ -221,7 +234,25 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
         dataset=cfg.training.dataset,
     )
 
-    # Federated aggregator
+    # ── Supervised Pretraining on full data ──────────────────────────────
+    # Compute class weights from full training data
+    class_counts = np.bincount(y_train, minlength=num_classes)
+    inv_freqs = len(y_train) / (class_counts + 1e-8)
+    full_cw = np.minimum(inv_freqs / (inv_freqs.sum() / num_classes), 3.0)
+
+    print("\n  [Pretrain] Supervised pretraining (CE loss, 3 epochs)...")
+    pretrain_info = server_agent.supervised_pretrain(
+        X=X_train,
+        y=y_train,
+        class_weights=full_cw,
+        num_epochs=3,
+        batch_size=256,
+        lr=1e-3,
+    )
+    print(f"  Pretrain: CE={pretrain_info['pretrain_ce_loss']:.4f}, Acc={pretrain_info['pretrain_accuracy']:.4f}")
+
+    # ── Initialise global model from pretrained weights ──
+    init_state = server_agent.get_model_state()
     aggregator = FederatedAggregator(cfg, device)
 
     # RL-based Client Selector (Tier 2)
@@ -236,7 +267,7 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
             total_rounds=cfg.training.num_rounds,
         )
         k_init = cfg.training.clients_per_round
-        k_min = max(3, k_init // 2)
+        k_min = max(5, cfg.training.num_clients // 2)
         print(f"  RL Client Selector enabled: curriculum K_sel {k_init}->{k_min}")
 
     # ── Initialise global model ──
@@ -308,6 +339,14 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
         if "selector_state" in ckpt and client_selector is not None:
             client_selector.set_state(to_device(ckpt["selector_state"], device))
 
+        # Restore selector scheduler state
+        if "selector_scheduler_state" in ckpt and client_selector is not None:
+            sel_sched = ckpt["selector_scheduler_state"]
+            if client_selector.actor_scheduler and "actor" in sel_sched:
+                client_selector.actor_scheduler.load_state_dict(sel_sched["actor"])
+            if client_selector.critic_scheduler and "critic" in sel_sched:
+                client_selector.critic_scheduler.load_state_dict(sel_sched["critic"])
+
         # Restore LR scheduler states
         if "lr_states" in ckpt and cfg.ppo.lr_scheduler_enabled:
             lr_states = ckpt["lr_states"]
@@ -347,8 +386,11 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
             reputations = aggregator.fl_trust.reputations[:cfg.training.num_clients]
 
             # Curriculum K_sel: decays from K_init → K_min over rounds
+            # FIX: min_k_sel=3 was too aggressive, causing lock-in on 3 clients.
+            # For Non-IID data, need at least 50% of clients to maintain diversity.
+            # New: min_k_sel = max(5, 50% of clients)
             k_init = cfg.training.clients_per_round
-            k_min = max(3, k_init // 2)
+            k_min = max(5, cfg.training.num_clients // 2)
             k_sel = RLClientSelector.k_sel_schedule(
                 round_idx, k_init=k_init, k_min=k_min,
                 total_rounds=cfg.training.num_rounds,
@@ -601,6 +643,13 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
                 lr_states["server_actor"] = server_agent.actor_scheduler.state_dict()
                 lr_states["server_critic"] = server_agent.critic_scheduler.state_dict()
 
+        selector_scheduler_state = {}
+        if client_selector is not None:
+            if client_selector.actor_scheduler is not None:
+                selector_scheduler_state["actor"] = client_selector.actor_scheduler.state_dict()
+            if client_selector.critic_scheduler is not None:
+                selector_scheduler_state["critic"] = client_selector.critic_scheduler.state_dict()
+
         save_checkpoint(
             filepath=os.path.join(cfg.training.output_dir, "checkpoint_latest.pt"),
             round_idx=round_idx,
@@ -612,6 +661,7 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
             best_accuracy=best_accuracy,
             lr_states=lr_states if lr_states else None,
             selector_state=client_selector.get_state() if client_selector is not None else None,
+            selector_scheduler_state=selector_scheduler_state if selector_scheduler_state else None,
         )
 
         # Bug 4 fix: update previous-round losses for next round's selector state

@@ -24,10 +24,10 @@ import shutil
 #  CONFIGURATION — Adjust these as needed
 # ══════════════════════════════════════════════════════════════
 
-NUM_ROUNDS = 30                    # Total communication rounds
-NUM_CLIENTS = 10                  # Number of federated clients
-LOCAL_EPISODES = 8               # Local RL episodes per round per client (V2 fix: 5→8)
-SAMPLE_LIMIT = 50000              # Max samples per CSV file
+NUM_ROUNDS = 100                    # Total FL communication rounds
+NUM_CLIENTS = 10                    # Number of federated clients
+LOCAL_EPISODES = 8                  # Local RL episodes per round per client
+SAMPLE_LIMIT = 50000                # Max samples per CSV file
 SEED = 42
 DATASETS_TO_TRAIN = ["edge_iiot"]
 
@@ -36,7 +36,9 @@ DATASETS_TO_TRAIN = ["edge_iiot"]
 # Set RUN_MODE = "federated" to run federated training (original)
 # Set RUN_MODE = "compare" to run both baseline + federated and compare
 RUN_MODE = "compare"            # <-- CHANGE THIS to switch modes
-BASELINE_ROUNDS = 40             # rounds for baseline (lower LR, slower convergence)
+BASELINE_ROUNDS = 20             # rounds for baseline (with supervised pretrain)
+# k_sel: controlled by clients_per_round below
+# k_min: hardcoded to 5 in train.py (max(5, num_clients // 2))
 
 # ══════════════════════════════════════════════════════════════
 #  STEP 1: Setup code & data
@@ -164,6 +166,8 @@ else:
 #  STEP 2: V2/V3 Config Fixes (apply BEFORE training)
 # ══════════════════════════════════════════════════════════════
 
+from src.config import Config
+
 def apply_v3_config(cfg: Config) -> Config:
     """
     Apply V3 config to Config for federated training — MATCHES baseline_train.py V3.
@@ -179,6 +183,9 @@ def apply_v3_config(cfg: Config) -> Config:
       PPO:
         lr_actor 3e-4→1e-4, lr_critic 1e-3→5e-4
         clip_epsilon 0.2→0.1, ppo_epochs 4→8, mini_batch 64→128
+        lr_warmup_rounds=5 (warmup 5 rounds + cosine decay)
+      Selector:
+        selector_eval_interval 5→3 (33 updates vs 20 for 100 rounds)
     Note: return_norm in GAE + per-mb advantage norm are already in ppo_agent.py (always active).
     """
     # Reward
@@ -198,6 +205,10 @@ def apply_v3_config(cfg: Config) -> Config:
     cfg.ppo.ppo_epochs = 8
     cfg.ppo.mini_batch_size = 128
     cfg.ppo.lr_min_factor = 0.05
+    cfg.ppo.lr_warmup_rounds = 5
+
+    # Selector: more frequent updates (5→3) for ~33 updates in 100 rounds
+    cfg.training.selector_eval_interval = 3
 
     return cfg
 
@@ -653,7 +664,7 @@ for dataset_name in DATASETS_TO_TRAIN:
     cfg.training.sample_limit_per_file = SAMPLE_LIMIT
     cfg.training.output_dir = output_dir
     cfg.training.client_selection_enabled = True     # RL Client Selector (Tier-2)
-    cfg.training.clients_per_round = max(3, NUM_CLIENTS // 2)  # K_sel = half of clients
+    cfg.training.clients_per_round = NUM_CLIENTS - 2  # K_sel = 8 (decays to min 5)
 
     print(f"\n  V3 Config applied (matches baseline_train.py):")
     print(f"    TN_REWARD={cfg.reward.tn_reward}, FN_PENALTY={cfg.reward.fn_penalty}")

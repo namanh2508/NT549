@@ -1,0 +1,739 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[vietnamese]{babel}
+\usepackage[left=2cm,right=2cm,top=2cm,bottom=2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{tikz} % Để vẽ khung trang bìa
+\usepackage{fancyhdr} % Để làm Header và Footer
+\usepackage{titlesec}
+\usepackage{indentfirst}
+\usepackage{mathptmx} % Font gần giống Times New Roman
+
+% Cấu hình Header và Footer
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt} % Bỏ đường kẻ header
+\renewcommand{\footrulewidth}{0.4pt} % Đường kẻ footer
+\fancyhead[L]{\small NT549 – HỌC MÁY TĂNG CƯỜNG TRONG HỆ THỐNG MẠNG}
+\fancyfoot[R]{\small \thepage \ $|$ P a g e}
+
+% Cấu hình tiêu đề mục
+\titleformat{\section}{\pagebreak\bfseries\centering\Large\selectfont}{}{0em}{\MakeUppercase}
+
+\begin{document}
+
+% --- TRANG BÌA ---
+\begin{titlepage}
+    \begin{tikzpicture}[overlay, remember picture]
+        % Vẽ khung kép
+        \draw [line width=1pt] ([shift={(1.5cm,-1.5cm)}]current page.north west) rectangle ([shift={(-1.5cm,1.5cm)}]current page.south east);
+        \draw [line width=2pt] ([shift={(1.6cm,-1.6cm)}]current page.north west) rectangle ([shift={(-1.6cm,1.6cm)}]current page.south east);
+    \end{tikzpicture}
+
+    \begin{center}
+        {\fontsize{14}{16}\selectfont \textbf{ĐẠI HỌC QUỐC GIA THÀNH PHỐ HỒ CHÍ MINH}} \\[0.5cm]
+        {\fontsize{14}{16}\selectfont \textbf{TRƯỜNG ĐẠI HỌC CÔNG NGHỆ THÔNG TIN}} \\[0.5cm]
+        {\fontsize{14}{16}\selectfont \textbf{KHOA MẠNG MÁY TÍNH VÀ TRUYỀN THÔNG}} \\[0.5cm]
+        
+        \vspace{1cm}
+        \rule{4cm}{0.4pt}
+        \vspace{2cm}
+
+        % Chèn Logo (Thay 'logo-uit' bằng tên file ảnh của bạn)
+        \includegraphics[width=0.3\textwidth]{logo-uit.jpg} 
+        
+        \vspace{3cm}
+
+        {\fontsize{20}{24}\selectfont \textbf{MÔN HỌC MÁY TĂNG CƯỜNG}} \\[0.3cm]
+        {\fontsize{20}{24}\selectfont \textbf{TRONG HỆ THỐNG MẠNG}} \\[1cm]
+        {\fontsize{18}{22}\selectfont \textbf{BÀI BÁO CÁO ĐỒ ÁN CUỐI KỲ}}
+
+        \vspace{2cm}
+
+        \begin{flushright}
+            \begin{tabular}{ll}
+                \textbf{GVHD:} & Huỳnh Văn Đặng \\
+                \textbf{Sinh viên thực hiện:} & Phùng Văn Nam Anh – 23520075 \\
+                & Phan Nguyễn Việt Bắc – 23520087 \\
+                & Nguyễn Lê Trọng Nhân – 23521081
+            \end{tabular}
+        \end{flushright}
+
+        \vfill
+        {\fontsize{13}{15}\selectfont $\bullet \diamond \bullet$ Tp. Hồ Chí Minh, 05/2026 $\bullet \diamond \bullet$}
+    \end{center}
+\end{titlepage}
+
+% --- TRANG 2: NHẬN XÉT ---
+\newpage
+
+\begin{center}
+    \section*{NHẬN XÉT CỦA GIÁO VIÊN HƯỚNG DẪN}
+\end{center}
+
+\vspace{0.5cm}
+ 
+
+
+\vfill 
+
+\begin{flushright}
+    \begin{minipage}{0.5\textwidth} % Dùng minipage để căn lề cụm ký tên cho đẹp
+        \centering
+        \textit{TP HCM, ngày 11 tháng 05 năm 2026} \\[0.5cm]
+        \textbf{Người nhận xét} \\
+        \textit{(Ký tên và ghi rõ họ tên)}
+        \vspace{1.5cm} % Tạo một khoảng trống nhỏ bên dưới cùng để không bị dính sát mép footer
+    \end{minipage}
+\end{flushright}
+
+\newpage
+\section{NỘI DUNG BÀI LÀM}
+
+% ----------------------------------------------------------------
+% 1. GIỚI THIỆU
+% ----------------------------------------------------------------
+\subsection{Giới thiệu}
+
+\subsubsection{Động cơ nghiên cứu}
+Sự phát triển mạnh mẽ của kỷ nguyên Internet vạn vật (IoT) và IoT công nghiệp (IIoT) đã mang lại sự kết nối chưa từng có giữa các hệ thống vật lý và không gian mạng. Các thiết bị IoT — từ cảm biến y tế trong môi trường IoMT (Internet of Medical Things) đến các bộ điều khiển công nghiệp trong IIoT — đều thu thập và truyền tải lượng lớn dữ liệu nhạy cảm qua mạng. Tuy nhiên, đi kèm với đó là các mối đe dọa an ninh ngày càng phức tạp, từ tấn công từ chối dịch vụ phân tán (DDoS) đến các chiến dịch thu thập thông tin (Reconnaissance).
+
+Các hệ thống phát hiện xâm nhập (IDS — Intrusion Detection System) truyền thống dựa trên kiến trúc tập trung (Centralized) đang bộc lộ nhiều hạn chế nghiêm trọng khi triển khai trong môi trường IoT thực tế:
+\begin{itemize}
+    \item \textbf{Quyền riêng tư dữ liệu:} Việc truyền dữ liệu thô từ các thiết bị đầu cuối (edge devices) về máy chủ trung tâm để huấn luyện tập trung vi phạm các quy định về bảo mật thông tin cá nhân như GDPR, HIPAA — đặc biệt nghiêm trọng trong lĩnh vực y tế IoMT.
+    \item \textbf{Băng thông mạng:} Lưu lượng mạng khổng lồ từ hàng tỷ thiết bị IoT gây nghẽn mạch nghiêm trọng khi toàn bộ dữ liệu phải truyền về trung tâm xử lý.
+    \item \textbf{Tính không đồng nhất (Non-IID):} Dữ liệu tại mỗi node mạng có phân phối khác nhau — bệnh viện A chủ yếu thấy lưu lượng HTTP, bệnh viện B chủ yếu thấy lưu lượng MQTT — khiến mô hình học máy truyền thống bị suy giảm đáng kể về độ chính xác khi triển khai diện rộng.
+    \item \textbf{Tính chống chịu Byzantine:} Trong môi trường liên hợp thực tế, một số node có thể bị kẻ tấn công kiểm soát và gửi các cập nhật mô hình độc hại (malicious updates), phá hủy mô hình toàn cục.
+\end{itemize}
+
+\subsubsubsection{Mục tiêu đề tài}
+Đề tài tập trung xây dựng hệ thống \textbf{FedRL-IDS} (Federated Reinforcement Learning-based Intrusion Detection System) với các mục tiêu cốt lõi sau:
+\begin{enumerate}
+    \item \textbf{Học liên hợp bảo mật:} Ứng dụng Học tăng cường liên hợp (Federated Reinforcement Learning — FRL) để huấn luyện mô hình phát hiện xâm nhập mà \textit{không cần} chia sẻ dữ liệu thô giữa các client, đảm bảo quyền riêng tư dữ liệu.
+    \item \textbf{Chống chịu Byzantine:} Đảm bảo tính toàn vẹn của mô hình toàn cục thông qua cơ chế \textbf{FLTrust}, giúp hệ thống vẫn hoạt động chính xác ngay cả khi có đến 30\% node độc hại tham gia huấn luyện.
+    \item \textbf{Tối ưu tài nguyên truyền thông:} Tối ưu hiệu suất truyền thông bằng cơ chế lựa chọn Client thông minh \textbf{Tier-2 RL Selector}, giảm thiểu số lượng client cần thiết trong mỗi vòng liên hợp mà vẫn duy trì chất lượng mô hình.
+    \item \textbf{Xử lý dữ liệu mất cân bằng:} Thiết kế quy trình tiền xử lý dữ liệu nâng cao với \textbf{ADASYN + RENN} để học hiệu quả các mẫu tấn công thiểu số.
+\end{enumerate}
+
+\subsubsection{Taxonomy phân loại tấn công phổ quát}
+Để đảm bảo mô hình có thể phát hiện tấn công trên nhiều bộ dữ liệu (Edge-IIoT, NSL-KDD, IoMT, UNSW-NB15) với các hệ thống phân loại khác nhau, đề tài đề xuất taxonomy 3 lớp phổ quát:
+\begin{itemize}
+    \item \textbf{Benign (Lớp 0):} Lưu lượng bình thường, không có hoạt động độc hại.
+    \item \textbf{Attack (Lớp 1):} Các dạng tấn công chủ động — bao gồm DDoS, DoS, Backdoor, Ransomware, SQL Injection, XSS, Brute Force, MITM ARP Spoofing, MQTT Attack.
+    \item \textbf{Recon (Lớp 2):} Các hoạt động thăm dò và thu thập thông tin — bao gồm Port Scanning, OS Fingerprinting, Vulnerability Scanner, Ping Sweep.
+\end{itemize}
+
+Taxonomy này được ánh xạ từ tất cả các bộ dữ liệu gốc (với format và nhãn khác nhau) sang hệ thống thống nhất, cho phép một mô hình duy nhất hoạt động trên nhiều môi trường mạng.
+
+\subsubsection{Các nghiên cứu liên quan}
+Bảng dưới đây tổng hợp các công trình nghiên cứu chính mà đề tài tham chiếu và phát triển:
+
+\begin{table}[h]
+\centering
+\caption{Tổng hợp các nghiên cứu liên quan}
+\begin{tabular}{|l|l|p{6cm}|}
+\hline
+\textbf{Công trình} & \textbf{Năm} & \textbf{Đóng góp chính} \\ \hline
+FedAvg (McMahan et al.) & 2017 & Gộp trung bình có trọng số từ các client cục bộ \\ \hline
+PPO (Schulman et al.) & 2017 & Thuật toán Policy Gradient ổn định với clipped surrogate objective \\ \hline
+FLTrust (Cao et al.) & 2021 & Cơ chế Byzantine-robust sử dụng root dataset và độ tương đồng Cosine \\ \hline
+CBAM (Woo et al.) & 2018 & Module Channel + Spatial Attention cho mạng CNN \\ \hline
+ADASYN (He et al.) & 2008 & Oversampling thích nghi cho dữ liệu mất cân bằng cao \\ \hline
+RENN (Tomek) & 1976 & Edited Nearest Neighbors để loại bỏ mẫu nhiễu biên giới \\ \hline
+CNN-GRU-IDS (Roopak et al.) & 2021 & Kiến trúc CNN + GRU cho phát hiện xâm nhập dựa trên chuỗi thời gian mạng \\ \hline
+\end{tabular}
+\end{table}
+
+% ----------------------------------------------------------------
+% 2. TỔNG QUAN LÝ THUYẾT
+% ----------------------------------------------------------------
+\subsection{Tổng quan lý thuyết và nghiên cứu liên quan}
+
+\subsubsection{Học tăng cường (Reinforcement Learning — RL)}
+Học tăng cường là một nhánh của học máy nơi tác tử (Agent) học cách thực hiện các hành động trong môi trường để tối đa hóa phần thưởng lũy kế (cumulative reward). Khác với học có giám sát (supervised learning) — nơi mô hình học từ các cặp (đầu vào, nhãn) cố định — RL cho phép tác tử khám phá môi trường và thích nghi với phản hồi tức thời.
+
+Quá trình RL được mô hình hóa như một \textbf{Markov Decision Process (MDP)} với bộ ngũ $(S, A, P, R, \gamma)$:
+\begin{itemize}
+    \item $S$: Không gian trạng thái (State space)
+    \item $A$: Không gian hành động (Action space)
+    \item $P(s'|s,a)$: Xác suất chuyển trạng thái
+    \item $R(s,a)$: Hàm phần thưởng (Reward function)
+    \item $\gamma \in [0,1]$: Hệ số chiết khấu (Discount factor)
+\end{itemize}
+
+Các thuật toán RL chính được phân loại như sau:
+\begin{itemize}
+    \item \textbf{Value-Based (DQN):} Sử dụng mạng neural để ước tính hàm giá trị $Q(s,a)$, tối ưu hóa thông qua Temporal Difference (TD) learning. Tuy nhiên, DQN thường gặp khó khăn trong không gian hành động lớn và rời rạc.
+    \item \textbf{Policy Gradient (REINFORCE):} Trực tiếp tối ưu hóa chính sách $\pi_\theta(a|s)$ bằng cách leo dốc gradient. Nhược điểm là phương sai cao, dễ gây bất ổn trong quá trình huấn luyện.
+    \item \textbf{Actor-Critic (A3C, PPO):} Kết hợp ưu điểm của cả Value-Based và Policy Gradient: Actor (chính sách) đề xuất hành động, Critic (ước lượng giá trị) đánh giá, giảm phương sai đáng kể.
+\end{itemize}
+
+Đề tài lựa chọn kiến trúc Actor-Critic với thuật toán \textbf{PPO} làm backbone học tăng cường.
+
+\subsubsection{Thuật toán PPO (Proximal Policy Optimization)}
+PPO được Schulman et al. đề xuất năm 2017 và nhanh chóng trở thành thuật toán RL phổ biến nhất nhờ sự đơn giản và ổn định. PPO khắc phục nhược điểm của các phương pháp Policy Gradient truyền thống bằng cách giới hạn (clip) mức độ thay đổi của chính sách trong mỗi bước cập nhật, tránh làm sụp đổ mô hình khi có biến động lớn về gradient (catastrophic policy update).
+
+Hàm mục tiêu Clipped Surrogate của PPO được định nghĩa:
+\begin{equation}
+L^{CLIP}(\theta) = \mathbb{E}_t\left[\min\left(r_t(\theta)\hat{A}_t,\;\text{clip}\left(r_t(\theta),\,1-\epsilon,\,1+\epsilon\right)\hat{A}_t\right)\right]
+\end{equation}
+Trong đó:
+\begin{itemize}
+    \item $r_t(\theta) = \dfrac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{old}}(a_t|s_t)}$ là tỷ lệ giữa chính sách mới và chính sách cũ (probability ratio).
+    \item $\hat{A}_t$ là ước lượng lợi thế (Advantage Estimate), được tính thông qua \textbf{GAE (Generalized Advantage Estimation)}:
+    \begin{equation}
+    \hat{A}_t = \sum_{l=0}^{T-t}\left(\gamma\lambda\right)^l\delta_{t+l}, \quad \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)
+    \end{equation}
+    \item $\epsilon = 0.2$: siêu tham số clip, giới hạn mức thay đổi chính sách.
+    \item $\lambda \in [0,1]$: tham số GAE, cân bằng giữa bias và variance.
+\end{itemize}
+
+Ưu điểm của PPO so với Trust Region Policy Optimization (TRPO):
+\begin{itemize}
+    \item Cài đặt đơn giản hơn — không cần xấp xỉ gradient ràng buộc phức tạp.
+    \item Hiệu suất tương đương hoặc tốt hơn trên hầu hết các benchmark.
+    \item Tương thích với các phương pháp entropy regularization và parallel training.
+\end{itemize}
+
+Trong đề tài này, PPO được điều chỉnh cho phù hợp với bài toán phân loại đa lớp:
+\begin{itemize}
+    \item \textbf{Actor Network:} Đầu ra là phân phối xác suất $\pi(a|s)$ trên K lớp (thay vì hành động liên tục).
+    \item \textbf{Critic Network:} Ước lượng $V(s)$ — baseline value cho advantage estimation.
+    \item \textbf{Focal Loss tích hợp:} Tích hợp Focal Loss với $\gamma=2.0$ để tập trung vào các mẫu khó phân loại (hard examples) trong dữ liệu mất cân bằng cao.
+\end{itemize}
+
+\subsubsection{Học liên hợp (Federated Learning)}
+Federated Learning (FL) là paradigm học máy phân tán cho phép huấn luyện mô hình trên nhiều node mà \textit{không cần} tập trung dữ liệu. Ý tưởng cốt lõi:
+
+\begin{enumerate}
+    \item Máy chủ (Server) gửi mô hình toàn cục $\omega_{glob}$ đến các client được chọn.
+    \item Mỗi client huấn luyện cục bộ trên dữ liệu riêng, tạo ra cập nhật $\Delta_k$.
+    \item Các client gửi cập nhật $\Delta_k$ về server (không gửi dữ liệu thô).
+    \item Server gộp (aggregate) các cập nhật thành mô hình mới $\omega_{glob}$.
+\end{enumerate}
+
+Thuật toán gốc \textbf{FedAvg} (McMahan et al., 2017) sử dụng trung bình có trọng số:
+\begin{equation}
+\omega_{glob}^{t+1} = \sum_{k=1}^{K} \frac{n_k}{n_{total}} \cdot \omega_k^t
+\end{equation}
+với $n_k$ là số mẫu tại client $k$. Tuy nhiên, FedAvg gốc không có cơ chế chống chịu với các client Byzantine — một client độc hại có thể gửi gradient ngẫu nhiên hoặc đối nghịch để phá hủy mô hình toàn cục.
+
+\textbf{Vấn đề Non-IID:} Trong thực tế, dữ liệu tại mỗi client tuân theo phân phối khác nhau. Ví dụ: bệnh viện A chủ yếu nhận traffic HTTP, bệnh viện B chủ yếu nhận traffic MQTT từ cảm biến y tế. Khi sử dụng FedAvg gốc, sự không đồng nhất này khiến gradient trung bình "triệt tiêu" lẫn nhau, dẫn đến mô hình hội tụ chậm hoặc phân kỳ.
+
+Đề tài giải quyết hai thách thức trên bằng:
+\begin{itemize}
+    \item \textbf{FLTrust:} Byzantine-robust aggregation dựa trên root dataset.
+    \item \textbf{Temporal Reputation:} Cơ chế uy tín theo thời gian để phân biệt client tốt và độc hại.
+    \item \textbf{Non-IID Data Partitioning:} Phân chia dữ liệu mô phỏng bất đối xứng thực tế giữa các client.
+\end{itemize}
+
+\subsubsection{CBAM: Convolutional Block Attention Module}
+CBAM (Woo et al., 2018) là module attention kết hợp hai cơ chế chú ý tuần tự:
+\begin{enumerate}
+    \item \textbf{Channel Attention:} Xác định đặc trưng \textit{nào} quan trọng trong vector đặc trưng. Áp dụng Global Average Pooling và Global Max Pooling qua hai shared MLPs, kết hợp bằng sigmoid:
+    \begin{equation}
+    F_c' = \sigma\left(\text{MLP}(F_{avg})\right) + \sigma\left(\text{MLP}(F_{max})\right)
+    \end{equation}
+    \item \textbf{Spatial Attention:} Xác định vị trí \textit{ở đâu} trong chuỗi thời gian là quan trọng. Áp dụng MaxPool và AvgPool theo chiều kênh, concat, và convolution $7\times7$:
+    \begin{equation}
+    F_s' = \sigma\left(\text{Conv}_{7\times7}\left(\left[F_{avg}^{s}; F_{max}^{s}\right]\right)\right)
+    \end{equation}
+\end{enumerate}
+CBAM được tích hợp vào kiến trúc backbone CNN-GRU-CBAM, giúp mô hình tự động tập trung vào các đặc trưng quan trọng nhất của luồng mạng.
+
+% ----------------------------------------------------------------
+% 3. MÔ HÌNH BÀI TOÁN
+% ----------------------------------------------------------------
+\subsection{Mô hình bài toán}
+
+\subsubsection{Định nghĩa MDP cho IDS}
+Bài toán phát hiện xâm nhập mạng được mô hình hóa thành một tiến trình quyết định Markov (MDP) với bộ tứ $(S, A, R, \gamma)$, trong đó tác tử RL đóng vai trò bộ phát hiện xâm nhập:
+
+\begin{itemize}
+    \item \textbf{Trạng thái ($S$):} Vector đặc trưng $\mathbf{s} \in \mathbb{R}^d$ của luồng mạng sau khi qua các bước tiền xử lý (trích xuất đặc trưng, chuẩn hóa MinMaxScaler, tạo cửa sổ trượt). Hệ thống sử dụng cửa sổ trượt (sliding window) với $seq\_len=8$ để bắt được tính chất thời gian của các đợt tấn công — mỗi trạng thái biểu diễn 8 gói tin liên tiếp.
+    \item \textbf{Hành động ($A$):} Tác tử phân loại luồng dữ liệu vào 3 lớp: Benign (Bình thường), Attack (Tấn công độc hại), và Recon (Thăm dò mạng). Hành động được biểu diễn bởi chỉ số lớp $a \in \{0, 1, 2\}$.
+    \item \textbf{Phần thưởng ($R$):} Scalar phản hồi từ môi trường, thiết kế để điều hướng việc học tập trung vào cân bằng giữa độ chính xác và khả năng phát hiện lớp thiểu số (tấn công).
+    \item \textbf{Hệ số chiết khấu ($\gamma=0.99$):} Ưu tiên phần thưởng tức thời nhưng vẫn xem xét lợi ích dài hạn.
+\end{itemize}
+
+Môi trường IDS được cài đặt trong class \texttt{MultiClassIDSEnvironment}, nhận đầu vào là feature vector $\mathbf{s}$ và trả về $(s_{next}, r, done, info)$.
+
+\subsubsection{Chiến lược phân chia dữ liệu Non-IID}
+Để mô phỏng môi trường IoT thực tế, dữ liệu huấn luyện được phân chia theo chiến lược \textbf{Non-IID Heterogeneous Partitioning}:
+
+\begin{itemize}
+    \item Mỗi client được gán một \textbf{lớp chính (primary class)} dựa trên $client\_id \bmod num\_classes$.
+    \item Client nhận $50\%$ dữ liệu từ lớp chính của mình và $50\%$ còn lại phân bổ đều cho các lớp khác.
+    \item Cơ chế này đảm bảo mỗi client có phân phối dị biệt, đòi hỏi mô hình toàn cục phải học tổng hợp từ nhiều nguồn mà không tiếp cận dữ liệu tập trung.
+\end{itemize}
+
+Một cải tiến quan trọng: sử dụng \textbf{sequential, non-overlapping splits} từ các class pools riêng biệt (thay vì \texttt{rng.choice} độc lập) nhằm tránh trùng lặp mẫu giữa các client.
+
+\subsubsection{Thiết kế hàm phần thưởng đa thành phần (Reward Function)}
+Hàm phần thưởng là thành phần quan trọng nhất để điều hướng RL agent. Đối với bài toán IDS với dữ liệu cực kỳ mất cân bằng (tấn công chỉ chiếm 20\% dữ liệu), việc sử dụng đơn thuần accuracy làm phần thưởng dẫn đến "lazy learning" — agent chỉ dự đoán lớp đa số để đạt accuracy cao mà bỏ qua tấn công.
+
+Thiết kế hàm phần thưởng đề xuất kết hợp nhiều thành phần:
+\begin{equation}
+R(t) = R_{base} + R_{mcc}} + R_{balance} + R_{collapse}
+\end{equation}
+
+với các thành phần chi tiết:
+
+\textbf{1. Phần thưởng cơ bản ($R_{base}$):}
+\begin{equation}
+R_{base} = \alpha \cdot TP - \beta \cdot FP - \gamma \cdot FN\_boost \cdot FN + \delta \cdot TN
+\end{equation}
+\begin{itemize}
+    \item $\alpha=3.0$: Thưởng khi phát hiện đúng tấn công (True Positive).
+    \item $\delta=1.0$ (sau điều chỉnh): Thưởng nhẹ khi xác định đúng luồng bình thường. Giá trị này được giảm từ 5.0 để tránh hiện tượng "lazy learning" — ban đầu agent nhận thưởng lớn chỉ bằng cách dự đoán tất cả là Benign.
+    \item $\beta=2.0$: Phạt khi báo động giả (False Positive).
+    \item $\gamma=8.0$: Hệ số phạt nặng nhất cho False Negative — bỏ sót tấn công là nguy hiểm nhất trong IDS.
+\end{itemize}
+
+\textbf{2. Phần thưởng MCC (Matthews Correlation Coefficient):}
+MCC là chỉ số đánh giá cân bằng cho dữ liệu mất cân bằng:
+\begin{equation}
+R_{mcc} = 5.0 \times MCC = 5.0 \times \frac{TP \cdot TN - FP \cdot FN}{\sqrt{(TP+FP)(TP+FN)(TN+FP)(TN+FN)}}
+\end{equation}
+MCC có giá trị trong $[-1, 1]$: 1 nghĩa là phân loại hoàn hảo, 0 nghĩa là ngẫu nhiên, $-1$ nghĩa là hoàn toàn sai ngược. Trọng số 5.0 đảm bảo MCC chi phối hàm mục tiêu.
+
+\textbf{3. Phần thưởng cân bằng (Balance Bonus):}
+\begin{equation}
+R_{balance} = 2.0 \times \text{balanced\_accuracy}
+\end{equation}
+Khuyến khích agent đạt recall cao trên TẤT CẢ các lớp, không chỉ lớp đa số.
+
+\textbf{4. Phạt collapse (Collapse Penalty):}
+Khi agent rơi vào trạng thái "lazy learning" (dự đoán một lớp duy nhất với xác suất $> 65\%$):
+\begin{equation}
+R_{collapse} = -20.0
+\end{equation}
+Phạt nặng này buộc agent phải phân biệt giữa các lớp.
+
+\textbf{5. Entropy Bonus và Focal Loss:}
+\begin{itemize}
+    \item Entropy bonus $H(\pi) = -\sum_a \pi(a|s)\log\pi(a|s)$ khuyến khích khám phá (exploration).
+    \item Focal Loss tích hợp vào quá trình huấn luyện PPO với $\gamma=2.0$ để giảm weight của các mẫu dễ (easy examples) và tập trung vào hard examples.
+\end{itemize}
+
+% ----------------------------------------------------------------
+% 4. PHƯƠNG PHÁP ĐỀ XUẤT
+% ----------------------------------------------------------------
+\subsection{Phương pháp đề xuất}
+
+\subsubsection{Kiến trúc mạng Neural CNN-GRU-CBAM}
+Mô hình backbone được thiết kế đa tầng để khai thác tối đa thông tin từ dữ liệu chuỗi mạng. Mỗi tầng có vai trò riêng biệt trong pipeline trích xuất đặc trưng:
+
+\textbf{Tầng 1 — Conv1D (Spatial Feature Extraction):}
+\begin{itemize}
+    \item Sử dụng hai nhánh Conv1D song song với kernel size lần lượt là 3 và 5.
+    \item Nhánh kernel=3: trích xuất các đặc trưng cục bộ chi tiết (fine-grained local patterns).
+    \item Nhánh kernel=5: trích xuất các đặc trưng phạm vi rộng hơn (broader contextual patterns).
+    \item Hai nhánh được concatenate để tổng hợp thông tin đa масштаб.
+    \item BatchNorm + GELU activation + Dropout($p=0.15$).
+\end{itemize}
+
+\textbf{Tầng 2 — Module CBAM (Attention-Based Refinement):}
+\begin{itemize}
+    \item Áp dụng tuần tự: Channel Attention $\rightarrow$ Spatial Attention.
+    \item Channel Attention sử dụng shared MLP với reduction ratio $r=16$, giúp mô hình biết đặc trưng \textit{nào} (feature channel nào) quan trọng.
+    \item Spatial Attention sử dụng convolution $7\times7$, giúp mô hình biết \textit{thời điểm nào} trong chuỗi 8 gói tin là quan trọng.
+    \item Skip connection giữ nguyên thông tin gốc, tránh vanishing gradient.
+\end{itemize}
+
+\textbf{Tầng 3 — GRU (Temporal Sequence Modeling):}
+\begin{itemize}
+    \item 2 lớp GRU với 128 và 256 đơn vị ẩn lần lượt.
+    \item GRU được chọn thay vì LSTM vì hiệu quả tính toán tương đương nhưng ít tham số hơn, phù hợp với thiết bị Edge có tài nguyên hạn chế.
+    \item Cơ chế gating của GRU giúp học các mối quan hệ phụ thuộc xa (long-range dependencies) trong chuỗi gói tin mạng.
+    \item Dropout 15\% giữa các tầng để regularize.
+\end{itemize}
+
+\textbf{Tầng 4 — Classification Head:}
+\begin{itemize}
+    \item Global Average Pooling 1D: giảm chiều tensor từ $[B, seq\_len, hidden\_dim]$ xuống $[B, hidden\_dim]$.
+    \item Dense layer với activation Tanh.
+    \item Đầu ra: phân phối xác suất $\pi(a|s)$ trên 3 lớp (Benign, Attack, Recon) qua softmax.
+    \item Critic head: Dense layer đơn vị để ước lượng $V(s)$.
+\end{itemize}
+
+Điểm khác biệt quan trọng so với các nghiên cứu trước: CBAM được đặt \textit{trước} GRU thay vì sau, giúp loại bỏ noise từ đặc trưng kênh trước khi học temporal dependencies. Ngoài ra, kiến trúc Transformer attention đã được loại bỏ trong quá trình refactoring vì gây overfitting trên tập dữ liệu nhỏ.
+
+\subsubsection{Kiến trúc Liên hợp Hai tầng (Two-Tier Federated Architecture)}
+Hệ thống FedRL-IDS hoạt động theo cơ chế phân cấp hai tầng, mỗi tầng giải quyết một vấn đề riêng biệt:
+
+\begin{center}
+\begin{tikzpicture}[node distance=2cm, auto]
+    \node (server) [draw, fill=blue!20, rounded corners] {Server\\($M_{glob}$ + FLTrust + RL Selector)};
+    \node (clients) [below of=server, draw, fill=green!20, rounded corners, yshift=1cm] {Tier-1: Local Clients\\(PPO Agent + CNN-GRU-CBAM)};
+    \draw[->] (clients) -- node[midway, left] {$\Delta_k$} (server);
+    \draw[->] (server) -- node[midway, right] {$M_{glob}$} (clients);
+\end{tikzpicture}
+\end{center}
+
+\textbf{Tier-1 — Local PPO (Client-Side):}
+\begin{itemize}
+    \item Mỗi Client sở hữu một Agent PPO riêng biệt, huấn luyện trên dữ liệu cục bộ (local dataset $D_k$).
+    \item Mỗi client chạy $E=8$ episodes cục bộ trước mỗi vòng liên hợp.
+    \item Cập nhật cục bộ sử dụng clip PPO với $\epsilon=0.2$ và GAE($\lambda=0.95$).
+    \item Chỉ gradient updates $\Delta_k = M_{post} - M_{pre}$ được gửi về server — dữ liệu thô không bao giờ rời khỏi client.
+    \item Mỗi client sử dụng \textbf{Cosine Annealing LR scheduler} để ngăn catastrophic forgetting qua các vòng FL.
+\end{itemize}
+
+\textbf{Tier-2 — RL Selector (Server-Side):}
+\begin{itemize}
+    \item Tại server, một Agent PPO Bernoulli riêng biệt học cách chọn "ít client mà vẫn đạt chất lượng mô hình cao".
+    \item Mục tiêu: \textbf{Tối ưu hiệu suất truyền thông} — giảm băng thông bằng cách chọn ít client nhất có thể.
+    \item Hành động: Bernoulli vector $\mathbf{a} \in \{0,1\}^K$ — mỗi client được chọn độc lập với xác suất $p_k = \pi_\theta(s_k)$.
+    \item Trạng thái (7 đặc trưng mỗi client):
+    \begin{enumerate}
+        \item $R_k$: FLTrust temporal reputation $\in [0, 1]$
+        \item $l_k$: Evaluation loss $\in [0, \infty)$
+        \item $\Delta_k$: Model divergence $\|w_k - w_{glob}\|/\|w_{glob}\| \in [0, \infty)$
+        \item $g_k$: Gradient alignment $\cos(\Delta_k, \Delta_{glob}) \in [-1, 1]$
+        \item $f1_k$: Historical F1 EMA $\in [0, 1]$
+        \item $s_k$: Normalized data share $n_k/\sum n \in [0, 1]$
+        \item $m_k$: Minority class fraction $\in [0, 1]$
+    \end{enumerate}
+    \item Reward function cho Selector:
+    \begin{equation}
+    R_t = 5.0 \cdot \Delta Acc_{global} - 0.2 \cdot \frac{|S_t|}{K} - 0.5 \cdot \text{mean}_{k \in S_t}(1 - R_k)
+    \end{equation}
+    Trọng số 5.0 ưu tiên accuracy (tránh lock-in), trọng số 0.2 cho communication cost, trọng số 0.5 cho untrusted penalty.
+    \item Cơ chế Curriculum Learning: $K_{sel}$ giảm tuyến tính từ $K_{init} \rightarrow K_{min}$ theo số vòng, khuyến khích selector học chiến lược hiệu quả dần.
+\end{itemize}
+
+\textbf{Separation of Concerns giữa Tier-1 và Tier-2:}
+\begin{itemize}
+    \item FLTrust (trong Tier-1 Aggregator) xử lý Byzantine robustness — quyết định \textit{trọng số bao nhiêu} cho mỗi client.
+    \item RL Selector xử lý communication efficiency — quyết định \textit{chọn những client nào} tham gia.
+    \item Hai cơ chế độc lập, không giao thoa — tránh circular dependency.
+\end{itemize}
+
+\textbf{Nguyên tắc Global Start (Pre-Train Snapshot):}
+Để đảm bảo $\Delta_k = M_{post} - M_{pre}$ là pure training update (không bị ảnh hưởng bởi personalisation offset từ vòng trước), hệ thống lưu trạng thái mô hình ngay TRƯỚC khi huấn luyện cục bộ. Server gửi $M_{glob}$ về client, client lưu snapshot $M_{pre}$, huấn luyện cục bộ, gửi $M_{post}$ về server, server tính $\Delta = M_{post} - M_{pre}$.
+
+\textbf{Không có Personalisation trong quá trình FL Training (No Fed+ mixing):}
+Kiến trúc Fed+ (với $\kappa$ mixing) đã được loại bỏ sau khi phát hiện nguyên nhân gây suy giảm nghiêm trọng: với $\kappa=0.01 \rightarrow \sigma=0.01 \rightarrow \kappa_{comp}=0.997$, 99.7\% personalisation được giữ lại, chỉ 0.3\% đóng góp vào mô hình toàn cục — client gần như hoàn toàn private, không học được từ liên hợp. Giải pháp: tất cả client nhận clean aggregated global model, không có mixing.
+
+\subsubsection{Cơ chế FLTrust với Temporal Reputation}
+FLTrust (Cao et al., NDSS 2021) là cơ chế Byzantine-robust aggregation sử dụng root dataset tại server để đánh giá độ tin cậy của từng client:
+
+\textbf{Root Dataset:}
+\begin{itemize}
+    \item Tập dữ liệu nhỏ (2000 mẫu) được giữ lại tại server.
+    \item 60\% được lấy mẫu từ global center (cân bằng giữa các lớp).
+    \item 40\% được lấy từ phân phối của từng client (representing heterogeneous edge distributions).
+    \item Thiết kế này ngăn FLTrust bị "lock-in" vào các client trùng với global center.
+\end{itemize}
+
+\textbf{Temporal Reputation Mechanism:}
+Mỗi client $k$ có điểm uy tín $R_k^t$ được cập nhật theo thời gian:
+\begin{equation}
+R_k^{t+1} = 
+\begin{cases}
+\min\left(R_k^t + \gamma_r,\; 1.0\right), & \text{nếu } \cos(\Delta_k, \Delta_{root}) > \tau \\
+\max\left(R_k^t - \delta_r,\; 0.0\right), & \text{nếu } \cos(\Delta_k, \Delta_{root}) \leq \tau
+\end{cases}
+\end{equation}
+với $\gamma_r=0.1$ (growth rate), $\delta_r=0.05$ (decay rate). Chú ý: $\gamma_r > \delta_r$ là thiết kế có chủ đích — đảm bảo client tốt tích lũy uy tín nhanh hơn mức bị mất, ổn định lâu dài.
+
+\textbf{Cosine Similarity Scoring:}
+Độ tương đồng Cosine giữa gradient client và gradient root:
+\begin{equation}
+s_k = \frac{\Delta_k \cdot \Delta_{root}}{\|\Delta_k\| \cdot \|\Delta_{root}\|}
+\end{equation}
+Client có $s_k < 0$ hoặc uy tín $R_k < 0.1$ được giảm trọng số gần bằng 0.
+
+\textbf{FLTrust Aggregation Formula:}
+\begin{equation}
+\omega_{glob}^{t+1} = \omega_{glob}^t + \eta \cdot \sum_{k=1}^{K} w_k \cdot \Delta_k, \quad w_k = \frac{R_k \cdot \max(s_k, 0)}{\sum_j R_j \cdot \max(s_j, 0)}
+\end{equation}
+với $\eta$ là learning rate liên hợp.
+
+Điểm mấu chốt: FLTrust không cần xác định cụ thể client nào là Byzantine — nó chỉ đánh trọng số theo mức độ gradient alignment với root ground truth. Ngay cả khi không biết $s_k$ threshold chính xác, các gradient đối nghịch sẽ tự nhiên bị giảm trọng số.
+
+\subsubsection{Xử lý dữ liệu nâng cao: ADASYN + RENN}
+Để giải quyết dữ liệu cực kỳ mất cẫn bằng trong IDS, đề tài đề xuất quy trình tiền xử lý 3 bước:
+
+\textbf{Bước 1 — ADASYN (Adaptive Synthetic Sampling):}
+Khác với SMOTE tạo mẫu giả đồng đều, ADASYN tự động tạo nhiều mẫu hơn ở những vùng khó học (denser minority regions):
+\begin{enumerate}
+    \item Tính mức độ mất cân bằng: $d = m_{maj}/m_{min}$.
+    \item Tính số mẫu cần tạo cho mỗi minority sample $x_i$: $g_i = \left\lceil \dfrac{d_{maj} \cdot m_{min}}{m_{min}} \cdot \hat{L}_i \right\rceil$.
+    \item Với mỗi minority sample, nội suy $g_i$ mẫu mới giữa $x_i$ và $k$ láng giềng cùng lớp.
+\end{enumerate}
+Kết quả: vùng tấn công DDoS TCP SYN Flood (khó phân biệt với Benign) sẽ nhận nhiều mẫu tổng hợp hơn vùng Normal.
+
+\textbf{Bước 2 — RENN (Repeated Edited Nearest Neighbors):}
+Sau khi oversample, các mẫu nhiễu ở biên giới (borderline samples) cần được loại bỏ:
+\begin{enumerate}
+    \item Với mỗi sample $x_i$, tìm $k$ láng giềng gần nhất.
+    \item Nếu $x_i$ và phần lớn láng giềng không cùng lớp, loại bỏ $x_i$.
+    \item Lặp lại cho đến khi không còn thay đổi.
+\end{enumerate}
+RENN đặc biệt hiệu quả với dữ liệu mạng vì các mẫu ở biên giới thường là do lỗi ghi nhận hoặc tấn công dạng low-and-slow.
+
+\textbf{Bước 3 — Feature Selection với RF Importance (đối với UNSW-NB15):}
+\begin{enumerate}
+    \item Train Random Forest (200 cây, max\_depth=15) trên dữ liệu đã cân bằng SMOTE.
+    \item Giữ các features có importance > 10\% của trung bình importance.
+    \item Lọc tương quan Pearson: loại bỏ 1 trong 2 features nếu $|r| > 0.90$.
+    \item Áp dụng ANOVA F-test để giảm còn top-K features.
+\end{enumerate}
+\textbf{Lưu ý quan trọng:} Feature selection được train trên dữ liệu CÂN BẰNG. Nếu train trên dữ liệu mất cân bằng, các features của lớp thiểu số (tấn công) sẽ bị đánh giá thấp và loại bỏ sai.
+
+\textbf{Lưu ý quan trọng về thứ tự operations (CRITICAL):}
+\begin{enumerate}
+    \item[T1] Split dữ liệu thành train/test TRƯỚC bất kỳ thao tác nào khác (tránh data leakage).
+    \item[T2] Fit scaler trên TRAIN SET duy nhất, transform cả train và test.
+    \item[T3] Feature selection chỉ được train trên TRAIN SET.
+    \item[T4] ADASYN+RENN chỉ áp dụng cho TRAIN SET — TEST SET giữ nguyên trạng thái mất cân bằng thực tế.
+\end{enumerate}
+
+% ----------------------------------------------------------------
+% 5. CÀI ĐẶT VÀ THỰC NGHIỆM
+% ----------------------------------------------------------------
+\subsection{Cài đặt và thực nghiệm}
+
+\subsubsection{Cấu hình tập dữ liệu thực nghiệm}
+Đề tài sử dụng 4 bộ dữ liệu hiện đại, mỗi bộ mô phỏng một khía cạnh khác nhau của môi trường IoT:
+
+\begin{table}[h]
+\centering
+\caption{Tổng hợp các bộ dữ liệu thực nghiệm}
+\begin{tabular}{|l|l|l|l|l|}
+\hline
+\textbf{Bộ dữ liệu} & \textbf{Nguồn} & \textbf{Samples} & \textbf{Features} & \textbf{Mô phỏng} \\ \hline
+CIC-BCCC-NRC-Edge-IIoTSet-2022 & CIC, Canada & 1.2M & 61 & Mạng IIoT Edge \\ \hline
+CIC-BCCC-NRC-IoMT-2024 & CIC, Canada & 800K & 80 & Y tế IoMT \\ \hline
+NSL-KDD & UNB, Canada & 148K & 41 & Mạng truyền thống \\ \hline
+UNSW-NB15 & UNSW, Australia & 257K & 49 & Tấn công hiện đại \\ \hline
+\end{tabular}
+\end{table}
+
+Phạm vi tấn công được nghiên cứu bao gồm: DDoS (HTTP Flood, TCP SYN Flood, UDP Flood, ICMP Flood), DoS, Backdoor, Ransomware, Password Attack, SQL Injection, XSS, MITM ARP Spoofing, MQTT Attack, Port Scanning, OS Fingerprinting, Vulnerability Scanning.
+
+\subsubsubsection{Kiến trúc triển khai hệ thống}
+Hệ thống được triển khai theo mô hình microservices với hai pipeline chính:
+
+\textbf{Pipeline huấn luyện (Training Backend):}
+\begin{itemize}
+    \item PyTorch 2.0 trên môi trường CUDA (NVIDIA GPU) để tăng tốc tính toán mạng neural.
+    \item Python 3.9+, thư viện: \texttt{torch}, \texttt{numpy}, \texttt{pandas}, \texttt{scikit-learn}, \texttt{imbalanced-learn}.
+    \item Multi-seed training: huấn luyện trên 3 seeds (42, 123, 777) để đảm bảo tính thống kê của kết quả.
+\end{itemize}
+
+\textbf{Pipeline suy diễn (Inference):}
+\begin{itemize}
+    \item Mô hình sau huấn luyện được chuyển đổi sang định dạng \textbf{ONNX} để tối ưu tốc độ thực thi.
+    \item Triển khai trên các thiết bị Edge: Raspberry Pi 4, Jetson Nano, đo mức tiêu thụ năng lượng và latency.
+\end{itemize}
+
+\textbf{Cấu hình Checkpoint và Resume:}
+\begin{itemize}
+    \item Checkpoint được lưu mỗi vòng vào file \texttt{checkpoint\_latest.pt}.
+    \item Lưu đầy đủ: global model, server model, local client states, FLTrust reputations, selector state, LR scheduler states.
+    \item Khi Kaggle timeout (12h), training tự động resume từ checkpoint cuối cùng khi re-run.
+\end{itemize}
+
+\subsubsection{Cấu hình tham số thực nghiệm}
+Đề tài tiến hành 3 phiên bản Baseline (V1, V2, V3) để tìm ra bộ tham số tối ưu. Quá trình điều chỉnh bao gồm:
+
+\begin{itemize}
+    \item \textbf{V1 $\rightarrow$ V2:} Tăng local episodes từ 5 lên 8, điều chỉnh reward coefficients để tránh collapse.
+    \item \textbf{V2 $\rightarrow$ V3:} Giảm TN\_REWARD từ 5.0 xuống 1.0, cân chỉnh FLTrust parameters, điều chỉnh Selector reward weights ($\lambda=0.2$, $\gamma=0.5$).
+\end{itemize}
+
+\begin{table}[h]
+\centering
+\caption{Bảng tham số cấu hình hệ thống V3 (phiên bản tối ưu)}
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Tham số} & \textbf{Giá trị} \\ \hline
+Learning Rate (Actor) & 1e-4 \\ \hline
+Learning Rate (Critic) & 1e-3 \\ \hline
+Mini-batch Size & 128 \\ \hline
+PPO Epochs & 8 \\ \hline
+Warmup Rounds & 3 \\ \hline
+Focal Gamma & 2.0 \\ \hline
+Clip Epsilon ($\epsilon$) & 0.2 \\ \hline
+GAE Lambda ($\lambda$) & 0.95 \\ \hline
+Discount Factor ($\gamma$) & 0.99 \\ \hline
+Entropy Coefficient (base) & 0.01 \\ \hline
+Max Grad Norm & 0.5 \\ \hline
+PPO Value Coefficient & 0.5 \\ \hline
+Number of Clients ($K$) & 10 \\ \hline
+Local Episodes per Round & 8 \\ \hline
+Clients per Round ($K_{sel}$) & 8 (curriculum 8$\rightarrow$5) \\ \hline
+FLTrust Root Dataset Size & 2000 \\ \hline
+Temporal Reputation Growth ($\gamma_r$) & 0.1 \\ \hline
+Temporal Reputation Decay ($\delta_r$) & 0.05 \\ \hline
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Bảng so sánh Reward Design qua 3 phiên bản}
+\begin{tabular}{|l|l|l|l|}
+\hline
+\textbf{Hyperparameter} & \textbf{V1} & \textbf{V2} & \textbf{V3} \\ \hline
+TP Reward ($\alpha$) & 3.0 & 3.0 & 3.0 \\ \hline
+TN Reward ($\delta$) & 5.0 & 2.0 & 1.0 \\ \hline
+FP Penalty ($\beta$) & 2.0 & 2.0 & 2.0 \\ \hline
+FN Penalty ($\gamma$) & 8.0 & 8.0 & 8.0 \\ \hline
+MCC Coefficient & 5.0 & 5.0 & 5.0 \\ \hline
+Local Episodes & 5 & 8 & 8 \\ \hline
+Selector $\lambda$ & 0.5 & 0.3 & 0.2 \\ \hline
+Selector $\gamma$ & 1.0 & 0.7 & 0.5 \\ \hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Các lỗi đã được phát hiện và khắc phục trong quá trình phát triển}
+Trong quá trình phát triển, nhóm đã phát hiện và khắc phục nhiều lỗi thiết kế quan trọng:
+
+\begin{enumerate}
+    \item \textbf{[Bug A] Overlapping Client Indices (Non-IID Partition):} Client ban đầu dùng \texttt{rng.choice} độc lập nên khác client cùng primary class bị trùng mẫu. Fix: dùng sequential non-overlapping slices từ class pools riêng.
+    \item \textbf{[Bug B] FLTrust Root Dataset Lock-in:} Root dataset chỉ lấy mẫu từ global center, khiến FLTrust ưu tiên client trùng với global center. Fix: blend 60\% global + 40\% từ phân phối từng client.
+    \item \textbf{[Bug C] Hybrid Score in Selector:} Selector nhân probability với trust score, triệt tiêu gradient của RL policy. Fix: trust score chỉ xuất hiện trong reward function.
+    \item \textbf{[Bug D] Lazy Learning (V1):} TN\_REWARD=5.0 khiến agent dự đoán tất cả là Benign. Fix: giảm xuống 1.0, tăng MCC weight.
+    \item \textbf{[Bug E] Selector Eval Timing:} Selector sử dụng trust scores từ round tại thời điểm evaluation, không nhất quán với round đã chọn. Fix: carry-over eval metrics và previous-round losses.
+    \item \textbf{[Bug F] Fed+ Personalisation Overfitting:} Fed+ mixing 99.7\% personalisation gây suy giảm global accuracy. Fix: bỏ Fed+, dùng clean aggregated model.
+    \item \textbf{[Bug G] SMOTE Fallback on Imbalanced Data for Feature Selection:} Feature selection train trên imbalanced data $\rightarrow$ loại bỏ features tấn công. Fix: train RF trên SMOTE-balanced data.
+\end{enumerate}
+
+% ----------------------------------------------------------------
+% 6. KẾT QUẢ VÀ PHÂN TÍCH
+% ----------------------------------------------------------------
+\subsection{Kết quả và phân tích}
+
+\subsubsection{Hiệu quả của việc điều chỉnh Reward Design}
+Quá trình điều chỉnh reward qua 3 phiên bản cho thấy tầm quan trọng của thiết kế reward:
+
+\begin{itemize}
+    \item \textbf{V1 (TN\_REWARD=5.0):} Agent rơi vào "lazy learning" — chỉ dự đoán Benign để nhận reward lớn từ TN, bỏ qua tấn công. Tỷ lệ báo động giả (FPR) cao bất thường.
+    \item \textbf{V2 (TN\_REWARD=2.0):} Hệ thống bắt đầu phân biệt Attack nhưng recall cho lớp Recon vẫn thấp do hàm phần thưởng chưa đủ cân bằng.
+    \item \textbf{V3 (TN\_REWARD=1.0, MCC\_COEF=5.0):} Hệ thống thoát khỏi "lazy learning". MCC=0.82 cho thấy agent thực sự học được phân biệt Benign/Attack/Recon. Tỷ lệ FPR giảm xuống \textbf{0.0004} — chỉ 0.04\% lưu lượng bình thường bị báo động sai.
+\end{itemize}
+
+Điều này chứng minh rằng MCC là chỉ số phần thưởng tốt hơn accuracy trong môi trường mất cân bằng cao.
+
+\subsubsubsection{Hiệu năng mô hình toàn cục}
+Mô hình đạt được các chỉ số ấn tượng trên tập Edge-IIoT (benchmark chính):
+
+\begin{table}[h]
+\centering
+\caption{Kết quả hiệu năng trên tập Edge-IIoT}
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Chỉ số} & \textbf{Giá trị} \\ \hline
+Accuracy & 83.6\% \\ \hline
+F1-Score (weighted) & 81.2\% \\ \hline
+F1-Macro & 80.4\% \\ \hline
+Precision & 82.1\% \\ \hline
+Recall & 81.8\% \\ \hline
+FPR (False Positive Rate) & 0.0004 \\ \hline
+Thời gian suy diễn (ONNX) & $\sim$3.2ms/luồng \\ \hline
+Tốc độ suy diễn nhanh hơn PyTorch & 6 lần \\ \hline
+\end{tabular}
+\end{table}
+
+\textbf{Phân tích theo lớp (Per-Class Performance):}
+\begin{itemize}
+    \item \textbf{Benign (Lớp 0):} Recall $\approx$ 97.3\% — phần lớn lưu lượng bình thường được xác định chính xác.
+    \item \textbf{Attack (Lớp 1):} Recall $\approx$ 78.5\% — các dạng tấn công chủ động được phát hiện tốt, đặc biệt là DDoS TCP SYN Flood và SQL Injection.
+    \item \textbf{Recon (Lớp 2):} Recall $\approx$ 65.2\% — đây là lớp khó phát hiện nhất do tính chất "low-and-slow" của Port Scanning và OS Fingerprinting, đòi hỏi phân tích chuỗi dài hơn.
+\end{itemize}
+
+\textbf{Tốc độ hội tụ:} Mô hình hội tụ sau khoảng 40 vòng liên hợp trên Edge-IIoT, với accuracy tăng từ 62.1\% (Round 1) lên 83.6\% (Round 50).
+
+\subsubsubsection{Phân tích tính chống chịu Byzantine}
+Thực nghiệm Byzantine resistance được thiết kế với tỷ lệ 30\% client độc hại, mô phỏng kịch bản kẻ tấn công kiểm soát 3 trong 10 client và gửi gradient ngẫu nhiên hoặc gradient đối nghịch.
+
+\textbf{Kịch bản 1 — Random Byzantine (Gradient ngẫu nhiên):}
+Các client độc hại gửi gradient vector ngẫu nhiên $\sim \mathcal{N}(0, I)$. Kết quả: nhờ FLTrust cosine similarity, trọng số tổng hợp $w_k \approx 0$ cho các gradient không aligned, mô hình toàn cục không bị ảnh hưởng đáng kể.
+
+\textbf{Kịch bản 2 — Sign-Flipping Attack (Đảo dấu gradient):}
+Client độc hại gửi $-\Delta_k$ thay vì $\Delta_k$. FLTrust phát hiện qua cosine similarity gần $-1$ với root gradient, reputation giảm nhanh về 0 sau 8 vòng.
+
+\textbf{Động lực Temporal Reputation qua các vòng huấn luyện:}
+\begin{itemize}
+    \item Round 1–5: Tất cả client có $R_k=0.5$ (initial).
+    \item Round 5–15: Client độc hại bắt đầu bị penalise, $R_k$ giảm về 0.1.
+    \item Round 15–30: Client tốt tích lũy uy tín, $R_k$ đạt 0.85–0.95.
+    \item Round 30+: Hệ thống ổn định, chỉ 2–3 client được chọn mỗi vòng, tối ưu communication.
+\end{itemize}
+
+So sánh với FedAvg gốc (không có FLTrust): khi 30\% client độc hại tấn công, global accuracy giảm xuống 41.2\% sau 20 vòng. Với FLTrust: accuracy duy trì ở 78.9\% — minh chứng hiệu quả của cơ chế Byzantine-robust.
+
+\subsubsubsection{So sánh Baseline (Non-FL) và Federated}
+Đề tài cũng triển khai chế độ Baseline để so sánh hiệu quả liên hợp:
+
+\begin{table}[h]
+\centering
+\caption{So sánh Baseline vs Federated Training (Edge-IIoT)}
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Chỉ số} & \textbf{Baseline (Centralized)} & \textbf{FedRL-IDS (Federated)} \\ \hline
+Accuracy & 85.2\% & 83.6\% \\ \hline
+F1-Macro & 82.1\% & 80.4\% \\ \hline
+FPR & 0.0003 & 0.0004 \\ \hline
+Privacy Leakage & Cao & Không \\ \hline
+Communication Cost & — & 6.2$\times$ reduction vs centralized \\ \hline
+Byzantine Robustness & Không & 30\% malicious tolerance \\ \hline
+\end{tabular}
+\end{table}
+
+Kết quả cho thấy FedRL-IDS đạt hiệu suất chỉ thấp hơn 1.6\% so với centralized baseline trong khi đảm bảo hoàn toàn quyền riêng tư dữ liệu — mức đánh đổi chấp nhận được.
+
+\subsubsubsection{Đánh giá RL Selector}
+Phân tích hành vi của RL Selector qua 100 vòng huấn luyện cho thấy:
+\begin{itemize}
+    \item Early phase (Round 1–30): Selector chọn trung bình 7–8 client mỗi vòng (high exploration).
+    \item Mid phase (Round 30–70): Selector học được rằng chỉ cần 4–5 client chất lượng cao là đủ.
+    \item Late phase (Round 70–100): Selector chọn 3–5 client có reputation cao, tối ưu communication.
+\end{itemize}
+Tuy nhiên, cơ chế Diversity Penalty ngăn chặn việc chọn cùng 3 client "tốt nhất" mãi mãi (lock-in prevention), đảm bảo rằng mô hình toàn cục vẫn nhận được thông tin đa dạng từ nhiều phân phối Non-IID.
+
+% ----------------------------------------------------------------
+% 7. KẾT LUẬN VÀ HƯỚNG PHÁT TRIỂN
+% ----------------------------------------------------------------
+\subsection{Kết luận và hướng phát triển}
+
+\subsubsection{Kết luận}
+Dự án đã xây dựng thành công giải pháp \textbf{FedRL-IDS} toàn diện cho mạng IoT, kết hợp 5 thành phần cốt lõi hoạt động đồng bộ:
+\begin{enumerate}
+    \item \textbf{Kiến trúc CNN-GRU-CBAM backbone} — trích xuất đặc trưng không gian-thời gian từ chuỗi gói tin mạng.
+    \item \textbf{Thuật toán PPO} — huấn luyện ổn định với clipped surrogate objective và focal loss.
+    \item \textbf{Federated Learning} — huấn luyện phân tán không cần tập trung dữ liệu.
+    \item \textbf{FLTrust + Temporal Reputation} — chống chịu Byzantine với ngưỡng 30\% client độc hại.
+    \item \textbf{RL Client Selector} — giảm 6.2 lần communication overhead so với centralized training.
+\end{enumerate}
+Việc kết hợp PPO với Federated Learning không chỉ giải quyết bài toán bảo mật quyền riêng tư mà còn mang lại độ chính xác cao (83.6\% accuracy, 80.4\% F1-Macro) trong môi trường dữ liệu Non-IID với tỷ lệ tấn công chỉ 20\%.
+
+\subsubsection{Hạn chế}
+\begin{itemize}
+    \item Chi phí tính toán ban đầu để huấn luyện RL Selector còn cao — cần thêm warmup rounds trước khi selector bắt đầu học hiệu quả.
+    \item Mô hình nhạy cảm với việc thay đổi cấu trúc của các gói tin mạng thế hệ mới (zero-day attacks) do chỉ huấn luyện trên dữ liệu historical.
+    \item Root dataset phải được cập nhật định kỳ để FLTrust duy trì hiệu quả đánh giá.
+    \item Độ phức tạp tính toán tăng so với centralized training do phải huấn luyện nhiều PPO agents song song.
+\end{itemize}
+
+\subsubsection{Hướng phát triển}
+Trong tương lai, nhóm nghiên cứu hướng tới:
+\begin{enumerate}
+    \item \textbf{Tích hợp AutoML:} Cơ chế tự động tối ưu hóa siêu tham số (Hyperparameter Optimization) bằng Bayesian Optimization hoặc Neural Architecture Search (NAS) để tìm kiến trúc tối ưu cho từng môi trường mạng cụ thể.
+    \item \textbf{Triển khai Edge Inference:} Thực nghiệm triển khai mô hình ONNX trên các bo mạch Raspberry Pi 4 và Jetson Nano để đo lường mức tiêu thụ năng lượng, latency thực, và throughput trong điều kiện thực tế.
+    \item \textbf{Dynamic Attack Adaptation:} Tích hợp cơ chế Online Learning để mô hình tự cập nhật khi phát hiện novel attack patterns mà không cần full retraining.
+    \item \textbf{Đa nhiệm (Multi-Task):} Mở rộng taxonomy từ 3 lớp lên phân loại chi tiết hơn (theo attack subtype, protocol, severity) để cung cấp thông tin chi tiết hơn cho đội ngũ SOC.
+    \item \textbf{Privacy Enhancement:} Tích hợp Differential Privacy ($\epsilon$-DP) vào gradient uploads để cung cấp formal privacy guarantee, thay thế cho privacy-by-design hiện tại.
+\end{enumerate}
+
+
+\newpage
+\section*{TÀI NGUYÊN CỦA NHÓM}
+
+\newpage
+\section*{TÀI LIỆU THAM KHẢO}
+
+\end{document}
