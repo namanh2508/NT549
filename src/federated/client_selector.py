@@ -658,10 +658,14 @@ class RLClientSelector:
             action_vec[k] = 1.0
 
         # Bernoulli log_prob: sum over clients of [a_k·log p_k + (1−a_k)·log(1−p_k)]
-        p = np.clip(bernoulli_probs, 1e-6, 1 - 1e-6)
-        log_prob = float(np.sum(
-            action_vec * np.log(p) + (1 - action_vec) * np.log(1 - p)
-        ))
+        if bernoulli_probs is not None:
+            p = np.clip(bernoulli_probs, 1e-6, 1 - 1e-6)
+            log_prob = float(np.sum(
+                action_vec * np.log(p) + (1 - action_vec) * np.log(1 - p)
+            ))
+        else:
+            # Round 0 forced random: uniform log_prob ≈ 0
+            log_prob = 0.0
 
         self.buffer.add(state, action_vec, log_prob, reward, done=False)
 
