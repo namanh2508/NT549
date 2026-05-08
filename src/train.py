@@ -385,10 +385,10 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
         if client_selector is not None:
             reputations = aggregator.fl_trust.reputations[:cfg.training.num_clients]
 
-            # Curriculum K_sel: decays from K_init → K_min over rounds
-            # FIX: min_k_sel=3 was too aggressive, causing lock-in on 3 clients.
-            # For Non-IID data, need at least 50% of clients to maintain diversity.
-            # New: min_k_sel = max(5, 50% of clients)
+            # Curriculum K_sel: decays from K_init → K_min over rounds.
+            # k_min = max(5, num_clients // 2) = 5. After round 30 (forced random phase),
+            # RL Selector controls the selection — it may learn to keep k_sel higher
+            # than the default curriculum if it finds quality clients.
             k_init = cfg.training.clients_per_round
             k_min = max(5, cfg.training.num_clients // 2)
             k_sel = RLClientSelector.k_sel_schedule(
@@ -420,6 +420,18 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
                 k_sel=k_sel,
                 minority_fractions=[c.minority_class_fraction for c in local_clients],
             )
+
+            # Force random selection in first 30 rounds to prevent RL collapse
+            # into deterministic "always pick clients 8,1,4,3" — ensures diversity
+            if round_idx < 30:
+                selected_indices = sorted(
+                    np.random.RandomState(cfg.training.seed + round_idx).choice(
+                        cfg.training.num_clients, size=k_sel, replace=False
+                    ).tolist()
+                )
+                bernoulli_probs = None  # unavailable for random selection
+                if round_idx == 0:
+                    print(f"  [Selector] Rounds 0-29: forced random selection (k_sel={k_sel})")
         else:
             selected_indices = list(range(cfg.training.num_clients))
 

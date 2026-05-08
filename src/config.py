@@ -302,7 +302,7 @@ class TrainingConfig:
     client_selection_enabled: bool = True
     clients_per_round: int = 8          # K_sel: number of clients selected per round
     selector_hidden_dim: int = 128
-    selector_eval_interval: int = 3    # update selector every N rounds
+    selector_eval_interval: int = 2    # update selector every N rounds (~95 updates for 200 rounds)
 
 
 @dataclass

@@ -24,7 +24,7 @@ import shutil
 #  CONFIGURATION — Adjust these as needed
 # ══════════════════════════════════════════════════════════════
 
-NUM_ROUNDS = 100                    # Total FL communication rounds
+NUM_ROUNDS = 200                    # Total FL communication rounds
 NUM_CLIENTS = 10                    # Number of federated clients
 LOCAL_EPISODES = 8                  # Local RL episodes per round per client
 SAMPLE_LIMIT = 50000                # Max samples per CSV file
@@ -35,7 +35,7 @@ DATASETS_TO_TRAIN = ["edge_iiot"]
 # Set RUN_MODE = "baseline" to run non-federated single-agent baseline
 # Set RUN_MODE = "federated" to run federated training (original)
 # Set RUN_MODE = "compare" to run both baseline + federated and compare
-RUN_MODE = "compare"            # <-- CHANGE THIS to switch modes
+RUN_MODE = "federated"            # <-- CHANGE THIS to switch modes
 BASELINE_ROUNDS = 20             # rounds for baseline (with supervised pretrain)
 # k_sel: controlled by clients_per_round below
 # k_min: hardcoded to 5 in train.py (max(5, num_clients // 2))
@@ -185,7 +185,7 @@ def apply_v3_config(cfg: Config) -> Config:
         clip_epsilon 0.2→0.1, ppo_epochs 4→8, mini_batch 64→128
         lr_warmup_rounds=5 (warmup 5 rounds + cosine decay)
       Selector:
-        selector_eval_interval 5→3 (33 updates vs 20 for 100 rounds)
+        selector_eval_interval 5→2 (~95 updates for 200 rounds)
     Note: return_norm in GAE + per-mb advantage norm are already in ppo_agent.py (always active).
     """
     # Reward
@@ -207,8 +207,8 @@ def apply_v3_config(cfg: Config) -> Config:
     cfg.ppo.lr_min_factor = 0.05
     cfg.ppo.lr_warmup_rounds = 5
 
-    # Selector: more frequent updates (5→3) for ~33 updates in 100 rounds
-    cfg.training.selector_eval_interval = 3
+    # Selector: more frequent updates (3→2) for ~95 updates in 200 rounds
+    cfg.training.selector_eval_interval = 2
 
     return cfg
 
