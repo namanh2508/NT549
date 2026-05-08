@@ -366,7 +366,7 @@ class RLClientSelector:
         self.clip_epsilon = self.cfg.clip_epsilon
         self.ppo_epochs = self.cfg.ppo_epochs
         self.entropy_coef_init = self.cfg.entropy_coef
-        self.entropy_coef_min = 0.02
+        self.entropy_coef_min = 0.05  # was 0.02 — keep more exploration late-stage
         self.value_coef = self.cfg.value_coef
         self.max_grad_norm = self.cfg.max_grad_norm
 
@@ -390,7 +390,7 @@ class RLClientSelector:
             gamma=0.99,
             gae_lambda=0.95,
             clip_epsilon=0.2,
-            entropy_coef=0.05,
+            entropy_coef=0.20,  # was 0.05 — force selector to explore diverse client combos
             value_coef=0.5,
             max_grad_norm=0.5,
             ppo_epochs=4,
