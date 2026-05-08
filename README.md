@@ -107,52 +107,52 @@ Step 8  ──▶  Selector Reward
 
 #### Tier-1: Local PPO Agent (`src/agents/ppo_agent.py`)
 
-| Variable | Description | Shape |
-|----------|-------------|-------|
+| Variable         | Description                                 | Shape                    |
+| ---------------- | ------------------------------------------- | ------------------------ |
 | **Input: state** | Network flow features (after preprocessing) | `[seq_len, feature_dim]` |
-| **Policy** | CNNGRU-CBAM backbone → Categorical(softmax) | Class logits per class |
-| **Action** | Class index (Benign=0, Attack=1, ...) | Scalar int |
-| **GAE(λ)** | λ=0.95, γ=0.99 | Advantage estimation |
-| **Focal Loss** | γ=2.0, down-weights majority class samples | Cross-entropy weighted |
-| **LR Schedule** | Cosine annealing: η_0=1e-4 → η_min=5e-6 | Per-round decay |
-| **Clip Epsilon** | ε=0.1 (V3 config) | PPO surrogate objective |
+| **Policy**       | CNNGRU-CBAM backbone → Categorical(softmax) | Class logits per class   |
+| **Action**       | Class index (Benign=0, Attack=1, ...)       | Scalar int               |
+| **GAE(λ)**       | λ=0.95, γ=0.99                              | Advantage estimation     |
+| **Focal Loss**   | γ=2.0, down-weights majority class samples  | Cross-entropy weighted   |
+| **LR Schedule**  | Cosine annealing: η_0=1e-4 → η_min=5e-6     | Per-round decay          |
+| **Clip Epsilon** | ε=0.1 (V3 config)                           | PPO surrogate objective  |
 
 #### Tier-2: RL Client Selector (`src/federated/client_selector.py`)
 
-| Variable | Description | Shape |
-|----------|-------------|-------|
-| **State (per client)** | [R_k, l_k, Δ_k, g_k, f1_k, s_k, m_k] | `[7]` per client → `[7K]` total |
-| **R_k** | FLTrust temporal reputation | `[0, 1]` |
-| **l_k** | Evaluation loss (−reward proxy) | `[0, ∞)` |
-| **Δ_k** | Model divergence ‖w_k−w_glob‖/‖w_glob‖ | `[0, ∞)` |
-| **g_k** | Gradient alignment cos(Δ_k, Δ_glob) | `[-1, 1]` |
-| **f1_k** | Historical F1 EMA | `[0, 1]` |
-| **s_k** | Normalized data share n_k/Σn | `[0, 1]` |
-| **m_k** | Minority class fraction | `[0, 1]` |
-| **Action** | Bernoulli per client: sigmoid(logit_k) | `[K]` binary |
-| **Reward** | R_t = ΔAcc − 0.5·(|S|/K) − 1.0·mean(1−R_k) | Scalar |
+| Variable               | Description                            | Shape                           |
+| ---------------------- | -------------------------------------- | ------------------------------- | --------------------- | ------ |
+| **State (per client)** | [R_k, l_k, Δ_k, g_k, f1_k, s_k, m_k]   | `[7]` per client → `[7K]` total |
+| **R_k**                | FLTrust temporal reputation            | `[0, 1]`                        |
+| **l_k**                | Evaluation loss (−reward proxy)        | `[0, ∞)`                        |
+| **Δ_k**                | Model divergence ‖w_k−w_glob‖/‖w_glob‖ | `[0, ∞)`                        |
+| **g_k**                | Gradient alignment cos(Δ_k, Δ_glob)    | `[-1, 1]`                       |
+| **f1_k**               | Historical F1 EMA                      | `[0, 1]`                        |
+| **s_k**                | Normalized data share n_k/Σn           | `[0, 1]`                        |
+| **m_k**                | Minority class fraction                | `[0, 1]`                        |
+| **Action**             | Bernoulli per client: sigmoid(logit_k) | `[K]` binary                    |
+| **Reward**             | R_t = ΔAcc − 0.5·(                     | S                               | /K) − 1.0·mean(1−R_k) | Scalar |
 
 #### FLTrust Aggregator (`src/federated/fed_trust.py`)
 
-| Variable | Description |
-|----------|-------------|
-| **Input: Δ_0** | Server update on root dataset |
-| **Input: Δ_k** | Local client updates |
-| **Cosine Trust** | TS_k = max(0, cos(Δ_k, Δ_0)) |
-| **Min-Max Norm** | (cos − min) / (max − min) → [0, 1] |
-| **Reputation Growth** | R += 0.1 × (cos − 0.5) × (1 − R) |
-| **Reputation Decay** | R -= 0.05 × (0.5 − cos) × R |
-| **Final Trust** | cos_weighted + 0.2 × (rep − 0.5) |
+| Variable              | Description                        |
+| --------------------- | ---------------------------------- |
+| **Input: Δ_0**        | Server update on root dataset      |
+| **Input: Δ_k**        | Local client updates               |
+| **Cosine Trust**      | TS_k = max(0, cos(Δ_k, Δ_0))       |
+| **Min-Max Norm**      | (cos − min) / (max − min) → [0, 1] |
+| **Reputation Growth** | R += 0.1 × (cos − 0.5) × (1 − R)   |
+| **Reputation Decay**  | R -= 0.05 × (0.5 − cos) × R        |
+| **Final Trust**       | cos_weighted + 0.2 × (rep − 0.5)   |
 
 #### IDS Environment (`src/environment/ids_env.py`)
 
-| Variable | Description |
-|----------|-------------|
-| **State** | Network flow features after MinMaxScaler + sequence window |
-| **Action** | Class index from Categorical policy |
-| **MCC Reward** | TP×3.0 + TN×1.0 − FP×2.0 − FN×8.0 + 5.0×MCC |
-| **Focal γ** | γ=2.0 in PPO update (down-weights easy samples) |
-| **Collapse Detection** | Every 20 steps: if one class > 65% predictions → penalty |
+| Variable               | Description                                                |
+| ---------------------- | ---------------------------------------------------------- |
+| **State**              | Network flow features after MinMaxScaler + sequence window |
+| **Action**             | Class index from Categorical policy                        |
+| **MCC Reward**         | TP×3.0 + TN×1.0 − FP×2.0 − FN×8.0 + 5.0×MCC                |
+| **Focal γ**            | γ=2.0 in PPO update (down-weights easy samples)            |
+| **Collapse Detection** | Every 20 steps: if one class > 65% predictions → penalty   |
 
 #### CNNGRU-CBAM Backbone (`src/models/networks.py`)
 
@@ -189,6 +189,7 @@ Input: [batch, seq_len, feature_dim]
 **Lý thuyết:** Policy Gradient methods update the policy in the direction of higher expected return. However, a large policy update can catastrophically collapse the policy (e.g., predicting all-Benign). PPO (Proximal Policy Optimization) constrains policy changes using a clipped surrogate objective, guaranteeing small, stable updates even in sensitive domains like IDS.
 
 **Ưu điểm so với vanilla Policy Gradient:**
+
 - **Trust Region**: Clipping ensures the new policy does not deviate too far from the old policy
 - **Sample Efficiency**: Reuses experience collected under the old policy
 - **Stable Convergence**: Widely proven in continuous and discrete control tasks
@@ -201,6 +202,7 @@ Input: [batch, seq_len, feature_dim]
 $$L^{\text{CLIP}}(\theta) = \mathbb{E}_t\left[\min\left(r_t(\theta)\hat{A}_t,\;\text{clip}(r_t(\theta),\,1-\epsilon,\,1+\epsilon)\hat{A}_t\right)\right]$$
 
 Trong đó:
+
 - **Ratio**: $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{\text{old}}}(a_t|s_t)} = \exp(\log\pi_\theta(a_t|s_t) - \log\pi_{\theta_{\text{old}}}(a_t|s_t))$
 - **Clip**: $\text{clip}(r, 1-\epsilon, 1+\epsilon)$ giới hạn ratio trong khoảng $[1-\epsilon, 1+\epsilon]$
 - **$\hat{A}_t$**: Advantage estimate từ GAE (xem 2.1.2)
@@ -250,11 +252,11 @@ $$\hat{A}_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{T-t}\left[(\gamma\lambda)
 
 $$\delta_t^{(V)} = r_t + \gamma V(s_{t+1}) - V(s_t)$$
 
-| $\lambda$ | Variance | Bias | Hành vi |
-|-----------|----------|------|---------|
-| $\lambda = 0$ | Cao | Cao | TD(0): 1-step bootstrap → dùng khi model đã tốt |
-| $\lambda = 1$ | Thấp | Thấp | Monte Carlo: không bootstrap |
-| $\lambda = 0.95$ | Trung bình | Trung bình | ✅ **Cân bằng tốt** — mặc định trong hệ thống |
+| $\lambda$        | Variance   | Bias       | Hành vi                                         |
+| ---------------- | ---------- | ---------- | ----------------------------------------------- |
+| $\lambda = 0$    | Cao        | Cao        | TD(0): 1-step bootstrap → dùng khi model đã tốt |
+| $\lambda = 1$    | Thấp       | Thấp       | Monte Carlo: không bootstrap                    |
+| $\lambda = 0.95$ | Trung bình | Trung bình | ✅ **Cân bằng tốt** — mặc định trong hệ thống   |
 
 **Công thức recursive:**
 
@@ -286,12 +288,14 @@ def compute_gae(self, last_value: float, gamma: float, lam: float):
 $$\text{MCC} = \frac{\text{TP} \times \text{TN} - \text{FP} \times \text{FN}}{\sqrt{(\text{TP}+\text{FP})(\text{TP}+\text{FN})(\text{TN}+\text{FP})(\text{TN}+\text{FN})}}$$
 
 **Ý nghĩa:**
+
 - **MCC = +1**: Perfect prediction
 - **MCC = 0**: Random prediction
 - **MCC = -1**: Inverse prediction
 - **Symmetric**: MCC penalizes FP và FN equally, phù hợp với IDS (cả false alert và missed attack đều có chi phí cao)
 
 **Ưu điểm so với Accuracy/F1:**
+
 - Accuracy bỏ qua class imbalance → misleading
 - F1 không symmetric: có thể đạt F1 cao mà model vẫn bias
 - MCC là correlation coefficient → đo lường quality của binary classification đầy đủ
@@ -312,6 +316,34 @@ reward = (
 # MCC bonus applied separately in PPO agent
 ```
 
+#### 2.1.4 Supervised Pretraining (Cross-Entropy Warm-up)
+
+**Lý thuyết:** Bắt đầu huấn luyện học tăng cường (PPO) từ tham số ngẫu nhiên (random init) trong môi trường phân loại đa lớp mất cân bằng rất dễ dẫn đến hiện tượng **policy collapse** (agent dự đoán toàn bộ là lớp đa số để nhận reward an toàn) hoặc hội tụ cực kỳ chậm. Để giải quyết, hệ thống áp dụng **Supervised Pretraining** trước khi tiến hành học tăng cường (fine-tune với PPO).
+
+**Cơ chế hoạt động:**
+
+- **Bước 1:** Sử dụng kiến trúc mạng Actor-Critic (CNN-GRU-CBAM) hiện tại.
+- **Bước 2:** Huấn luyện Actor network bằng **Cross-Entropy Loss** (kết hợp `class_weights` để xử lý việc mất cân bằng dữ liệu) trong khoảng 3 epochs.
+- **Bước 3:** Huấn luyện Critic network bằng **MSE Loss** để xấp xỉ baseline value (scale nhãn về khoảng [-1, 1]).
+
+**Ưu điểm:**
+
+- **Warm-up policy:** Tác tử PPO bắt đầu với một mô hình đã biết cách nhận diện các luồng mạng cơ bản thay vì phải "mò mẫm" một cách ngẫu nhiên.
+- **Tăng tốc huấn luyện:** Rút ngắn thời gian hội tụ của thuật toán RL đáng kể.
+- **Khắc phục Catastrophic Forgetting/Collapse:** Ngăn chặn việc policy bị sụp đổ ở những vòng huấn luyện PPO đầu tiên do ước lượng GAE bị nhiễu (vấn đề gặp phải ở các phiên bản thiết kế đầu tiên).
+
+```python
+# src/agents/ppo_agent.py — Supervised pretraining
+logits = self.actor(batch_states)           # [B, num_classes]
+values = self.critic(batch_states)          # [B]
+ce_loss = criterion(logits, batch_labels)
+
+critic_labels = (batch_labels.float() / (self.action_dim - 1)) * 2 - 1
+critic_loss = nn.MSELoss()(values.squeeze(), critic_labels)
+loss = ce_loss + 0.5 * critic_loss
+loss.backward()
+```
+
 ### 2.2 Federated Learning: FLTrust + Temporal Reputation
 
 #### 2.2.1 FLTrust — Cao et al., NDSS 2021
@@ -319,6 +351,7 @@ reward = (
 **Lý thuyết:** FLTrust giải quyết Byzantine attack bằng cách sử dụng một **root dataset** tại server để tạo "ground truth" gradient. So sánh direction của local updates với direction của server update qua cosine similarity.
 
 **Vấn đề Byzantine:**
+
 - Attacker có thể flip gradients: $\Delta_{\text{malicious}} = -\alpha \cdot \Delta_{\text{true}}$
 - FedAvg (weighted average) bị corrupted nghiêm trọng bởi 1 Byzantine client
 - FLTrust: cosine similarity âm → ReLU clip → weight $\approx 0$
@@ -341,6 +374,7 @@ $$\tilde{TS}_k = \frac{TS_k - \min_j TS_j}{\max_j TS_j - \min_j TS_j}$$
 $$\Delta_{\text{global}} = \sum_{k=1}^{K} \tilde{TS}_k \cdot \Delta_k$$
 
 **Ưu điểm:**
+
 - Byzantine clients with opposite-direction gradients → weight $\approx 0$
 - Server root dataset provides trustworthy reference direction
 - Lightweight: chỉ cần forward pass trên root dataset mỗi round
@@ -406,6 +440,7 @@ for i, cs in enumerate(cosine_scores):
 ```
 
 **Ưu điểm:**
+
 - Good clients (cos > 0) tích lũy reputation **2x nhanh hơn** bad clients mất
 - Reputation $\in [0, 1]$ → interpretable
 - Chống trust collapse: growth > decay đảm bảo trust không bị kéo về 0
@@ -422,15 +457,15 @@ $$T_k = \tilde{TS}_k + 0.2 \times (R_k - 0.5)$$
 
 **State vector components:**
 
-| Feature | Ký hiệu | Ý nghĩa | Range |
-|---------|---------|---------|-------|
-| $R_k$ | FLTrust reputation | Client reliability | $[0, 1]$ |
-| $l_k$ | Evaluation loss | Local model quality | $[0, \infty)$ |
-| $\Delta_k$ | Model divergence | $\\|w_k - w_{\text{glob}}\\| / \\|w_{\text{glob}}\\|$ | $[0, \infty)$ |
-| $g_k$ | Gradient alignment | $\cos(\Delta_k, \Delta_{\text{glob}})$ | $[-1, 1]$ |
-| $\mathrm{f1}_k$ | F1 EMA | Historical performance | $[0, 1]$ |
-| $s_k$ | Data share | $n_k / \sum n_j$ | $[0, 1]$ |
-| $m_k$ | Minority fraction | Rare class proportion | $[0, 1]$ |
+| Feature         | Ký hiệu            | Ý nghĩa                                | Range                   |
+| --------------- | ------------------ | -------------------------------------- | ----------------------- | ---- | ------------------ | --- | ------------- |
+| $R_k$           | FLTrust reputation | Client reliability                     | $[0, 1]$                |
+| $l_k$           | Evaluation loss    | Local model quality                    | $[0, \infty)$           |
+| $\Delta_k$      | Model divergence   | $\\                                    | w*k - w*{\text{glob}}\\ | / \\ | w\_{\text{glob}}\\ | $   | $[0, \infty)$ |
+| $g_k$           | Gradient alignment | $\cos(\Delta_k, \Delta_{\text{glob}})$ | $[-1, 1]$               |
+| $\mathrm{f1}_k$ | F1 EMA             | Historical performance                 | $[0, 1]$                |
+| $s_k$           | Data share         | $n_k / \sum n_j$                       | $[0, 1]$                |
+| $m_k$           | Minority fraction  | Rare class proportion                  | $[0, 1]$                |
 
 **Reward function:**
 $$R_t = \Delta\text{Acc} - 0.5 \cdot \frac{|S_t|}{K} - 1.0 \cdot \text{mean}_{k \in S_t}(1 - R_k)$$
@@ -441,12 +476,12 @@ $$R_t = \Delta\text{Acc} - 0.5 \cdot \frac{|S_t|}{K} - 1.0 \cdot \text{mean}_{k 
 
 **Bernoulli vs Softmax Top-K:**
 
-| | Softmax Top-K (RL-UDHFL) | Bernoulli PPO (Ours) |
-|--|--------------------------|----------------------|
-| Differentiability | Non-differentiable (argmax) | Fully differentiable |
-| Exploration | Limited | Full Bernoulli sampling |
-| Policy gradient | Degrades | Stable |
-| Output | Top-K fixed | Variable count per round |
+|                   | Softmax Top-K (RL-UDHFL)    | Bernoulli PPO (Ours)     |
+| ----------------- | --------------------------- | ------------------------ |
+| Differentiability | Non-differentiable (argmax) | Fully differentiable     |
+| Exploration       | Limited                     | Full Bernoulli sampling  |
+| Policy gradient   | Degrades                    | Stable                   |
+| Output            | Top-K fixed                 | Variable count per round |
 
 ### 2.3 Data Processing: Non-IID + ADASYN + RENN + Focal Loss
 
@@ -460,18 +495,19 @@ $$R_t = \Delta\text{Acc} - 0.5 \cdot \frac{|S_t|}{K} - 1.0 \cdot \text{mean}_{k 
 **Công thức:**
 
 1. Tính số synthetic samples cần tạo:
-$$g = (|D_{\text{maj}}| - |D_{\text{min}}|) \times \beta$$
+   $$g = (|D_{\text{maj}}| - |D_{\text{min}}|) \times \beta$$
 
 2. Với mỗi minority sample $x_i$, tính mức độ khó:
-$$r_i = \frac{\Delta_i}{k_1}, \quad \hat{r}_i = \frac{r_i}{\sum_i r_i}$$
+   $$r_i = \frac{\Delta_i}{k_1}, \quad \hat{r}_i = \frac{r_i}{\sum_i r_i}$$
 
 3. Số samples cần tạo cho $x_i$:
-$$g_i = \hat{r}_i \times g$$
+   $$g_i = \hat{r}_i \times g$$
 
 4. Synthetic sample:
-$$s_i = x_i + (x_{zi} - x_i) \times \lambda, \quad x_{zi} \in k\text{-NN minority}$$
+   $$s_i = x_i + (x_{zi} - x_i) \times \lambda, \quad x_{zi} \in k\text{-NN minority}$$
 
 **Ưu điểm so với SMOTE:**
+
 - SMOTE: tạo samples đều trên boundary
 - ADASYN: tạo **nhiều hơn** ở vùng có $\hat{r}_i$ cao (harder regions)
 - Tự động adapt với local density của minority class
@@ -498,6 +534,7 @@ $$S_{\text{enn}} = \{x_i \in S : x_i \in \text{majority\_class} \land x_i \in k\
 - DBSCAN tiếp theo loại bỏ outliers cuối cùng
 
 **Pipeline ADASYN + RENN (ADRDB Algorithm, Cao et al., 2022):**
+
 ```
 1. Split: majority (N) vs minority (P)
 2. ADASYN: oversample P → newP (adaptive)
@@ -507,6 +544,7 @@ $$S_{\text{enn}} = \{x_i \in S : x_i \in \text{majority\_class} \land x_i \in k\
 ```
 
 **Ưu điểm:**
+
 - ADASYN: tạo đủ minority samples ở hard regions
 - RENN: dọn dẹp borderline/noisy samples
 - DBSCAN: loại bỏ outliers cuối cùng
@@ -530,20 +568,20 @@ X_resampled, y_resampled = enn.fit_resample(X_step1, y_step1)
 
 $$\text{FL}(p_t) = -(1 - p_t)^\gamma \log(p_t)$$
 
-| $\gamma$ | Hành vi |
-|---------|---------|
+| $\gamma$     | Hành vi                               |
+| ------------ | ------------------------------------- |
 | $\gamma = 0$ | Focal Loss = Cross-Entropy (baseline) |
-| $\gamma = 1$ | Standard focal loss |
-| $\gamma = 2$ | **Mặc định trong hệ thống** |
-| $\gamma = 3$ | Aggressive down-weighting |
+| $\gamma = 1$ | Standard focal loss                   |
+| $\gamma = 2$ | **Mặc định trong hệ thống**           |
+| $\gamma = 3$ | Aggressive down-weighting             |
 
 **Ví dụ với $\gamma = 2$:**
 
-| $p_t$ | $(1-p_t)^2$ | Weight reduction |
-|-------|-------------|-----------------|
-| 0.9 (easy) | 0.01 | **100x down-weighted** |
-| 0.5 (hard) | 0.25 | 4x down-weighted |
-| 0.1 (very hard) | 0.81 | **1.2x up-weighted** |
+| $p_t$           | $(1-p_t)^2$ | Weight reduction       |
+| --------------- | ----------- | ---------------------- |
+| 0.9 (easy)      | 0.01        | **100x down-weighted** |
+| 0.5 (hard)      | 0.25        | 4x down-weighted       |
+| 0.1 (very hard) | 0.81        | **1.2x up-weighted**   |
 
 **Kết hợp với PPO (trong hệ thống):**
 
@@ -559,6 +597,7 @@ actor_loss = -(torch.min(surr1, surr2) * combined_weight).mean()
 ```
 
 **Ưu điểm:**
+
 - Tự động điều chỉnh — không cần manually tune class weights
 - Dễ tích hợp vào PPO (multiplicative form)
 - Đặc biệt hiệu quả với ADASYN+RENN đã làm sạch data
@@ -576,6 +615,7 @@ primary_class = classes[client_id % num_classes]
 ```
 
 **Tác động đến FL:**
+
 - Client drift: local models diverge từ global optimum
 - FLTrust + Temporal Reputation: giảm thiểu impact của heterogeneous updates
 - RL Selector: học chọn clients với data distributions tương tự
@@ -590,6 +630,7 @@ primary_class = classes[client_id % num_classes]
 **Output:** $[batch, seq\_len, num\_filters]$
 
 **Cấu trúc Conv1D:**
+
 ```
 Input: [batch, 79 features, 8 timesteps]
   ↓ permute(0, 2, 1)
@@ -603,6 +644,7 @@ Input: [batch, 79 features, 8 timesteps]
 ```
 
 **Ưu điểm của Conv1D cho IDS:**
+
 - **Local Pattern Detection**: Conv1D với kernel=3 detect local dependencies (3 consecutive packets)
 - **Multi-scale**: Kernel=5 capture longer patterns (5 timesteps)
 - **Parameter Efficiency**: Weight sharing giảm overfitting so với fully connected
@@ -626,12 +668,14 @@ $$\tilde{h}_t = \tanh(W_h \cdot [r_t \odot h_{t-1}, x_t] + b_h) \quad \text{(can
 $$h_t = (1 - z_t) \odot h_{t-1} + z_t \odot \tilde{h}_t \quad \text{(final hidden)}$$
 
 **Ưu điểm so với LSTM:**
+
 - GRU có **2 gates** (update, reset) vs LSTM's 3 (input, forget, output)
 - Fewer parameters → less overfitting, faster training
 - Hiệu quả trong sequence modeling ngắn-trung bình (network flows)
 - GRU's update gate tương tự "forget + input" của LSTM
 
 **Trong hệ thống:**
+
 ```python
 # src/models/networks.py — GRU layer
 self.gru = nn.GRU(
@@ -676,6 +720,7 @@ $$F'' = F' \otimes M_s \quad \text{(element-wise multiply)}$$
 $$F \xrightarrow{\otimes M_c} F' \xrightarrow{\otimes M_s} F''$$
 
 **Ưu điểm:**
+
 - **Lightweight**: Chỉ thêm ~2% parameters so với base CNN
 - **Sequential**: Channel → Spatial tốt hơn parallel (channel-only hoặc spatial-only)
 - **Plug-and-play**: Áp dụng được cho bất kỳ CNN architecture nào
@@ -727,10 +772,12 @@ Input: [batch, seq_len=8, feature_dim=79]
 $$\eta_t = \eta_{\min} + \frac{1}{2}\left(\eta_0 - \eta_{\min}\right)\left(1 + \cos\left(\frac{\pi t}{T_{\max}}\right)\right)$$
 
 **Trong hệ thống (V3 config):**
+
 - `warmup_rounds = 3`: LR tăng từ `warmup_lr_start=5e-5` → `lr=1e-4`
 - Sau warmup: CosineAnnealing từ `1e-4` → `lr_min=1e-4 × 0.05 = 5e-6`
 
 **Ưu điểm:**
+
 - Smooth decay: không có sharp discontinuities như step LR
 - Long tail: LR giảm chậm ở cuối, cho phép fine-tuning
 - Warmup: ngăn policy collapse ở early rounds (V1 bug)
@@ -749,14 +796,15 @@ actor_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
 
 **So sánh các normalization methods:**
 
-| Method | Batch Independence | Small Batch | Memory | Sensitivity to Batch |
-|--------|-------------------|-------------|--------|----------------------|
-| BatchNorm | ❌ | ❌ | Low | Very High |
-| LayerNorm | ✅ | ✅ | Medium | None |
-| GroupNorm (G=1) | ✅ | ✅ | Medium | None |
-| GroupNorm (G=32) | ✅ | ✅ | Medium | None |
+| Method           | Batch Independence | Small Batch | Memory | Sensitivity to Batch |
+| ---------------- | ------------------ | ----------- | ------ | -------------------- |
+| BatchNorm        | ❌                 | ❌          | Low    | Very High            |
+| LayerNorm        | ✅                 | ✅          | Medium | None                 |
+| GroupNorm (G=1)  | ✅                 | ✅          | Medium | None                 |
+| GroupNorm (G=32) | ✅                 | ✅          | Medium | None                 |
 
 **Trong CNNGRU-CBAM:**
+
 - `GroupNorm(1, 32)`: Normalize over all 32 channels (tương đương LayerNorm)
 - `GroupNorm(1, 64)`: Normalize over all 64 channels
 - **Không BatchNorm**: RL batch size thường < 32 → BatchNorm stats unreliable
@@ -778,6 +826,7 @@ $$L_{\text{total}} = L_{\text{actor}} - c_{\text{entropy}} \cdot H(\pi_\theta)$$
 $$H(\pi) = -\sum_a \pi(a|s) \log \pi(a|s)$$
 
 **Trong hệ thống:**
+
 - `entropy_coef = 0.01`: small coefficient → không override actor loss
 - Target entropy: ~1.5-1.8 cho 7-class classification
 
@@ -793,13 +842,14 @@ actor_loss = -torch.min(surr1, surr2).mean() - self.cfg.entropy_coef * entropy.m
 
 **Taxonomy:**
 
-| Universal Class | Edge-IIoT | NSL-KDD | IoMT 2024 | UNSW-NB15 |
-|----------------|-----------|---------|-----------|-----------|
-| **Benign (0)** | Benign Traffic | Normal | Benign | Normal |
-| **Attack (1)** | DDoS, Injection, Malware | DoS, R2L, U2R | DDoS, DoS, MITM, MQTT | Generic, Exploits, Fuzzers, Analysis, Backdoor, Shellcode, Worms |
-| **Recon (2)** | Reconnaissance | Probe | Recon | Reconnaissance |
+| Universal Class | Edge-IIoT                | NSL-KDD       | IoMT 2024             | UNSW-NB15                                                        |
+| --------------- | ------------------------ | ------------- | --------------------- | ---------------------------------------------------------------- |
+| **Benign (0)**  | Benign Traffic           | Normal        | Benign                | Normal                                                           |
+| **Attack (1)**  | DDoS, Injection, Malware | DoS, R2L, U2R | DDoS, DoS, MITM, MQTT | Generic, Exploits, Fuzzers, Analysis, Backdoor, Shellcode, Worms |
+| **Recon (2)**   | Reconnaissance           | Probe         | Recon                 | Reconnaissance                                                   |
 
 **Ưu điểm:**
+
 - **Single model**: Một model deploy được trên tất cả environments
 - **Domain adaptation**: Taxonomy capture structural similarities giữa các attacks
 - **Practical**: Edge devices chỉ cần load một model
@@ -824,6 +874,7 @@ def map_to_universal_taxonomy(df, dataset_name):
 #### 2.7.1 Tier-1: Local PPO Agents
 
 Mỗi client chạy local PPO agent trên partition data. Agent gồm:
+
 - **CNNGRU-CBAM backbone**: Feature extraction từ network flows
 - **PPO update**: Policy optimization với clipped surrogate objective
 - **IDS Environment**: Gym-like interface với MCC-based reward
@@ -834,7 +885,7 @@ class LocalClient:
     def __init__(self, client_id, X_train, y_train, ...):
         self.env = MultiClassIDSEnvironment(X=X_train, y=y_train, ...)
         self.ppo = PPOAgent(state_dim, action_dim, self.cfg)
-    
+
     def train_local(self):
         trajectory = self.env.run_episode(self.ppo)
         self.ppo.update(*trajectory)
@@ -844,6 +895,7 @@ class LocalClient:
 #### 2.7.2 Tier-2: RL Client Selector
 
 Bernoulli PPO agent quyết định chọn clients nào mỗi round. Chỉ nhận reward khi:
+
 1. Accuracy cải thiện (ΔAcc)
 2. Chọn ít clients hơn (communication efficiency)
 3. Tránh low-reputation clients
@@ -856,6 +908,7 @@ R_t = ΔAcc - 0.5 * (|S_t| / K) - 1.0 * mean(1 - R_k for k in S_t)
 #### 2.7.3 Central Server
 
 Server không train model trực tiếp. Chỉ:
+
 1. Nhận model updates từ clients
 2. Compute server update trên root dataset
 3. Chạy FLTrust aggregation
@@ -1085,6 +1138,7 @@ python -m src.train \
 ```
 
 **What happens:**
+
 1. 10 clients each hold a **Non-IID partition** of Edge-IIoT data
 2. Each round: RL Selector picks ~8 clients (curriculum: 8→4)
 3. Selected clients train locally with PPO (CNNGRU-CBAM)
@@ -1103,10 +1157,12 @@ python baseline_train.py \
 ```
 
 **What happens:**
-1. Single centralized PPO agent trained on full dataset
-2. Same CNNGRU-CBAM backbone, same reward function
-3. Used as **upper bound** for federated performance comparison
-4. Best V3 config: Acc=0.836, F1=0.804, FPR=0.0004
+
+1. **Supervised Pretraining (CE loss, 3 epochs)** để warm up policy.
+2. Single centralized PPO agent trained on full dataset (fine-tune bằng RL).
+3. Same CNNGRU-CBAM backbone, same reward function.
+4. Used as **upper bound** for federated performance comparison.
+5. Best V3 config: Acc=0.836, F1=0.804, FPR=0.0004
 
 ### 5.3 Compare Mode
 
@@ -1125,12 +1181,12 @@ Output: Side-by-side table comparing baseline vs federated metrics per round.
 
 ### 6.1 Why ONNX Runtime?
 
-| Metric | PyTorch | ONNX Runtime | Speedup |
-|--------|---------|-------------|---------|
-| Latency/flow | ~20ms | ~3-5ms | **4-6x faster** |
-| Throughput | ~50 req/s | ~800 req/s | **16x higher** |
-| Memory | PyTorch runtime | Optimized kernels | **Lower** |
-| Cross-platform | Linux only | ARM, Raspberry Pi, Jetson | **Yes** |
+| Metric         | PyTorch         | ONNX Runtime              | Speedup         |
+| -------------- | --------------- | ------------------------- | --------------- |
+| Latency/flow   | ~20ms           | ~3-5ms                    | **4-6x faster** |
+| Throughput     | ~50 req/s       | ~800 req/s                | **16x higher**  |
+| Memory         | PyTorch runtime | Optimized kernels         | **Lower**       |
+| Cross-platform | Linux only      | ARM, Raspberry Pi, Jetson | **Yes**         |
 
 ### 6.2 Inference Pipeline
 
@@ -1202,6 +1258,7 @@ Response: `{"total": 1000, "attacks": 234, "processing_ms": 142, "throughput_per
 ```bash
 curl http://localhost:8000/health
 ```
+
 Response: `{"status": "healthy", "model_loaded": true, "latency_p50_ms": 2.8, "latency_p99_ms": 4.7}`
 
 #### `GET /metrics` — System Metrics
@@ -1209,6 +1266,7 @@ Response: `{"status": "healthy", "model_loaded": true, "latency_p50_ms": 2.8, "l
 ```bash
 curl http://localhost:8000/metrics
 ```
+
 Response: `{"total_predictions": 1000000, "attacks_detected": 234567, "avg_latency_ms": 3.1, "model_version": "v3_epoch22", "uptime_seconds": 86400}`
 
 ---
@@ -1222,6 +1280,7 @@ This section describes 4 demo scenarios that demonstrate the full system in acti
 **Objective:** Verify ONNX throughput under realistic load. Measure latency percentiles (P50, P95, P99) and requests/second.
 
 **Setup:**
+
 ```bash
 # Terminal 1: Start FastAPI server
 uvicorn src.deploy.api:app --host 0.0.0.0 --port 8000 --workers 4
@@ -1238,11 +1297,13 @@ locust -f locustfile.py \
 ```
 
 **What Locust Does:**
+
 - Spawns 1000 concurrent users over 60 seconds
 - Each user sends a random flow payload (benign or attack)
 - Measures RPS, response time, and failure rate
 
 **Expected Output:**
+
 ```
 RPS: 800-1200 requests/second
 P50 latency: < 5ms
@@ -1252,6 +1313,7 @@ Total requests: ~60,000
 ```
 
 **Attack Payload Mix (from locustfile.py):**
+
 - 60% Benign traffic (normal web browsing patterns)
 - 15% DDoS attack (high packet rate, short duration)
 - 10% Port Scan (many destination ports, low byte count)
@@ -1264,6 +1326,7 @@ Total requests: ~60,000
 **Objective:** Live monitoring of the FastAPI server — watch the IDS detect attacks in real-time with live accuracy/F1/FPR metrics.
 
 **Setup:**
+
 ```bash
 # Terminal 1: FastAPI server already running (from Demo 1)
 
@@ -1296,6 +1359,7 @@ streamlit run demo_dashboard.py --server.port 8501
 **Objective:** Simulate Byzantine (malicious) clients sending corrupted gradients. Watch FLTrust reputation scores drop for malicious clients while benign clients maintain high trust.
 
 **Setup:**
+
 ```bash
 # Terminal 1: FastAPI server
 
@@ -1309,18 +1373,21 @@ python demo_traitor_simulation.py \
 ```
 
 **What the Simulation Does:**
+
 1. Starts with 10 federated clients
 2. Round 1-5: All honest → all clients have similar reputation (~0.5)
 3. Round 6: 3 clients begin sending sign-flipped gradients (Byzantine attack)
 4. Round 7-20: Watch reputation of malicious clients drop to ~0.1 while honest clients stay at ~0.7
 
 **Streamlit Visualization** (integrated in demo_dashboard.py):
+
 - Line chart: Reputation scores over rounds for each client
 - Red lines = detected malicious clients
 - Green lines = honest clients
 - Vertical dashed line at round 6 = attack start
 
 **Expected Output:**
+
 ```
 Round 5:  Client 0: R=0.62  Client 1: R=0.58  Client 2: R=0.55  ...
 Round 10: Client 0: R=0.71  Client 1: R=0.68  Client 3: R=0.12  (malicious)
@@ -1333,6 +1400,7 @@ Round 20: Client 0: R=0.74  Client 1: R=0.71  Client 3: R=0.05  (malicious)
 **Objective:** Demonstrate that the RL Selector learns to reduce K_sel from 8→4 while maintaining (or improving) F1-Macro. Visualize the curriculum schedule.
 
 **Setup:**
+
 ```bash
 # Train federated model with RL selector enabled
 python -m src.train \
@@ -1350,17 +1418,20 @@ streamlit run demo_dashboard.py \
 ```
 
 **What to Observe:**
+
 1. **Early rounds (1-10):** K_sel ≈ 8, selector explores many client combinations
 2. **Mid rounds (11-20):** K_sel decays toward 4, selector learns which clients matter most
 3. **Late rounds (21-30):** K_sel ≈ 4, F1-Macro should remain stable or improve
 
 **RL Selector Metrics (in dashboard):**
+
 - Line chart: K_sel over rounds (curriculum schedule)
 - Line chart: F1-Macro over rounds
 - Bar chart: Selection frequency per client
 - Text: "Selector saved X% communication overhead vs baseline"
 
 **Expected Learning Curve:**
+
 ```
 Round  1: K_sel=8.0, F1=0.58
 Round  5: K_sel=7.4, F1=0.68
@@ -1386,6 +1457,7 @@ sudo python real_network_sniffer.py \
 ```
 
 **What scapy Extracts:**
+
 - Source/destination IP and port
 - Packet count, byte count, duration
 - TCP flags (SYN, ACK, FIN, RST)
@@ -1401,65 +1473,68 @@ sudo python real_network_sniffer.py \
 
 Baseline experiments nhằm cô lập nguyên nhân gây ra kết quả kém trong federated setting. Ba phiên bản lần lượt sửa lỗi và cải thiện:
 
-| Phiên bản | Số rounds | Accuracy cuối | F1 cuối | FPR | Mục tiêu |
-|-----------|-----------|--------------|---------|-----|----------|
-| **Baseline V1** | 30 | 0.7397 | 0.7309 | 0.0004 | Default config (V1 gốc) |
-| **Baseline V2** | 25 | 0.8375 | 0.8455 | 0.0008 | Sửa FPR collapse, ổn định PPO |
-| **Baseline V3** | 22 | 0.8358 | 0.8041 | 0.0004 | Sửa warmup LR, tighter clip |
+| Phiên bản       | Số rounds | Accuracy cuối | F1 cuối | FPR    | Mục tiêu                      |
+| --------------- | --------- | ------------- | ------- | ------ | ----------------------------- |
+| **Baseline V1** | 30        | 0.7397        | 0.7309  | 0.0004 | Default config (V1 gốc)       |
+| **Baseline V2** | 25        | 0.8375        | 0.8455  | 0.0008 | Sửa FPR collapse, ổn định PPO |
+| **Baseline V3** | 22        | 0.8358        | 0.8041  | 0.0004 | Sửa warmup LR, tighter clip   |
 
 ### 8.2 So sánh tham số chi tiết
 
 #### Bảng 1: Reward Config
 
-| Tham số | Default (V1) | V2 | V3 | Thay đổi |
-|---------|---------------|-----|-----|----------|
-| `tn_reward` | **5.0** | **1.0** | 1.0 | Giảm 80% — ngăn FPR=1.0 collapse |
-| `fn_penalty` | 3.0 | **4.0** | 4.0 | Tăng 33% — mạnh hơn tín hiệu miss attack |
-| `balance_coef` | 2.0 | 1.0 | 1.0 | Giảm — ít cạnh tranh với MCC |
-| `entropy_coef` | 2.0 | 1.0 | 1.0 | Giảm — giảm diversity bonus |
-| `hhi_coef` | 2.5 | 1.0 | 1.0 | Giảm — ít phạt bias |
-| `collapse_thr` | 0.65 | **0.70** | 0.70 | Tolerance cao hơn |
-| `collapse_pen` | 20.0 | **15.0** | 15.0 | Giảm penalty |
-| `macro_f1_coef` | 5.0 | 3.0 | 3.0 | Giảm — cân bằng với MCC |
+| Tham số         | Default (V1) | V2       | V3   | Thay đổi                                 |
+| --------------- | ------------ | -------- | ---- | ---------------------------------------- |
+| `tn_reward`     | **5.0**      | **1.0**  | 1.0  | Giảm 80% — ngăn FPR=1.0 collapse         |
+| `fn_penalty`    | 3.0          | **4.0**  | 4.0  | Tăng 33% — mạnh hơn tín hiệu miss attack |
+| `balance_coef`  | 2.0          | 1.0      | 1.0  | Giảm — ít cạnh tranh với MCC             |
+| `entropy_coef`  | 2.0          | 1.0      | 1.0  | Giảm — giảm diversity bonus              |
+| `hhi_coef`      | 2.5          | 1.0      | 1.0  | Giảm — ít phạt bias                      |
+| `collapse_thr`  | 0.65         | **0.70** | 0.70 | Tolerance cao hơn                        |
+| `collapse_pen`  | 20.0         | **15.0** | 15.0 | Giảm penalty                             |
+| `macro_f1_coef` | 5.0          | 3.0      | 3.0  | Giảm — cân bằng với MCC                  |
 
 #### Bảng 2: PPO Config
 
-| Tham số | Default (V1) | V2 | V3 | Thay đổi |
-|---------|---------------|-----|-----|----------|
-| `lr_actor` | **3e-4** | **1e-4** | 1e-4 | Giảm 67% — chống oscillation |
-| `lr_critic` | 1e-3 | **5e-4** | 5e-4 | Giảm 50% |
-| `clip_epsilon` | **0.2** | **0.15** | **0.1** | Giảm — ngăn policy shift lớn |
-| `ppo_epochs` | 4 | **8** | 8 | Tăng gấp đôi — sample efficiency |
-| `mini_batch_size` | 64 | **128** | 128 | Tăng 2x — stable gradients |
-| `lr_min_factor` | 0.1 | **0.05** | 0.05 | Cho phép LR decay nhiều hơn |
+| Tham số           | Default (V1) | V2       | V3      | Thay đổi                         |
+| ----------------- | ------------ | -------- | ------- | -------------------------------- |
+| `lr_actor`        | **3e-4**     | **1e-4** | 1e-4    | Giảm 67% — chống oscillation     |
+| `lr_critic`       | 1e-3         | **5e-4** | 5e-4    | Giảm 50%                         |
+| `clip_epsilon`    | **0.2**      | **0.15** | **0.1** | Giảm — ngăn policy shift lớn     |
+| `ppo_epochs`      | 4            | **8**    | 8       | Tăng gấp đôi — sample efficiency |
+| `mini_batch_size` | 64           | **128**  | 128     | Tăng 2x — stable gradients       |
+| `lr_min_factor`   | 0.1          | **0.05** | 0.05    | Cho phép LR decay nhiều hơn      |
 
 #### Bảng 3: Training Config
 
-| Tham số | Default (V1) | V2 | V3 | Thay đổi |
-|---------|---------------|-----|-----|----------|
-| `episodes/round` | 5 | **8** | 8 | Giảm gradient variance |
-| `warmup_rounds` | 0 | **3** | **3** | Thêm — tránh LR quá cao ban đầu |
-| `warmup_lr_start` | N/A | **1e-5** | **5e-5** | V3 fix: LR quá thấp |
-| `patience` | ∞ | **10** | 10 | Early stopping |
-| `ema_alpha` | N/A | **0.3** | 0.3 | Smoothing metrics |
-| `return_norm_in_GAE` | ✗ | ✓ | ✓ | Ngăn critic loss explosion |
-| `advantage_norm_per_mb` | ✗ | ✗ | ✓ | V3: ổn định PPO updates |
+| Tham số                 | Default (V1) | V2       | V3       | Thay đổi                        |
+| ----------------------- | ------------ | -------- | -------- | ------------------------------- |
+| `episodes/round`        | 5            | **8**    | 8        | Giảm gradient variance          |
+| `warmup_rounds`         | 0            | **3**    | **3**    | Thêm — tránh LR quá cao ban đầu |
+| `warmup_lr_start`       | N/A          | **1e-5** | **5e-5** | V3 fix: LR quá thấp             |
+| `patience`              | ∞            | **10**   | 10       | Early stopping                  |
+| `ema_alpha`             | N/A          | **0.3**  | 0.3      | Smoothing metrics               |
+| `return_norm_in_GAE`    | ✗            | ✓        | ✓        | Ngăn critic loss explosion      |
+| `advantage_norm_per_mb` | ✗            | ✗        | ✓        | V3: ổn định PPO updates         |
 
 ### 8.3 Phân tích tác động của từng thay đổi
 
 #### TN_REWARD: 5.0 → 1.0 (V2)
 
 **Vấn đề gốc:**
+
 - Trong Edge-IIoT dataset (~78% attack), model có xu hướng predict tất cả là "Benign"
 - Với TN_REWARD=5.0 và TP_REWARD=3.0, reward cho True Negative cao hơn TP → model chọn chiến lược "an toàn"
 - Kết quả: FPR=1.0 (luôn predict Benign → recall attack = 0)
 
 **Tại sao TN_REWARD=1.0 giúp:**
+
 - Cân bằng lại: TP_REWARD=3.0 > TN_REWARD=1.0
 - Model buộc phải học attack patterns để nhận reward cao hơn
 - FPR giảm từ 1.0 xuống ~0.0008 (V2) và ~0.0004 (V3)
 
 **Bằng chứng từ kết quả:**
+
 ```
 V1 Round 1-5:  FPR=1.0  (model đoán all Benign)
 V2 Round 6+:   FPR=0.0007 (model bắt đầu detect attacks)
@@ -1468,10 +1543,12 @@ V2 Round 6+:   FPR=0.0007 (model bắt đầu detect attacks)
 #### Learning Rate: 3e-4 → 1e-4 (V2)
 
 **Vấn đề gốc:**
+
 - 30 rounds với LR=3e-4 quá nhiều → policy oscillation
 - Critic loss V1 tăng từ 59 → 140 (explosion)
 
 **Tác động:**
+
 - Model hội tụ ổn định hơn
 - Accuracy V2 đạt 0.83 so với 0.74 của V1
 - Critic loss V2: 37 → 33 (stable)
@@ -1479,31 +1556,37 @@ V2 Round 6+:   FPR=0.0007 (model bắt đầu detect attacks)
 #### Clip Epsilon: 0.2 → 0.15 → 0.1 (V2→V3)
 
 **Tại sao giảm clip:**
+
 - Clip epsilon giới hạn độ lớn của policy change: `clamp(ratio, 1-ε, 1+ε)`
 - ε lớn (0.2) cho phép policy thay đổi nhanh, dễ gây collapse
 - ε nhỏ (0.1) bảo vệ stable policy nhưng có thể hội tụ chậm
 
 **Kết quả:**
+
 - V3 accuracy: 0.8358 (so với V2: 0.8375)
 - V3 ít volatility hơn ở các rounds cuối
 
 #### Warmup LR: 0 → 3 rounds (V2)
 
 **Vấn đề gốc (V1→V2):**
+
 - Round 1 với LR cao → policy collapse ngay lập tức
 - V1 Round 1: accuracy=0.28, V2 Round 1: accuracy=0.14
 
 **V2 fix:**
+
 - Warmup: 1e-5 → 3e-4 qua 3 rounds
 - Giúp policy ổn định trước khi dùng full LR
 
 **V3 fix (1e-5 → 5e-5):**
+
 - 1e-5 quá thấp → Round 1 vẫn collapse (0.14)
 - 5e-5 tốt hơn: Round 1 accuracy V3 = 0.31
 
 #### Episodes/round: 5 → 8 (V2)
 
 **Lý do:**
+
 - Nhiều episodes hơn = variance thấp hơn trong gradient estimates
 - Mỗi episode cho một "view" khác nhau của data distribution
 - Trade-off: training chậm hơn nhưng gradient quality cao hơn
@@ -1523,6 +1606,7 @@ Round   V1 (EMA)    V2 (EMA)    V3 (EMA)
 ```
 
 **Nhận xét:**
+
 - V3 có start tốt nhất (Round 1: 0.31)
 - V2 có trajectory smooth nhất (ít oscillation)
 - V1 có volatility cao nhất (peak 0.80 ở Round 13, drop xuống 0.58 ở Round 19)
@@ -1545,25 +1629,25 @@ Round   V1 (EMA)    V2 (EMA)    V3 (EMA)
 
 ### 9.1 Components Removed
 
-| Component | File | Reason |
-|-----------|------|--------|
-| **Meta-Agent (Tier-2 old)** | `src/agents/meta_agent.py` | Overfitting on local test data (Meta-Agent Illusion) |
-| **Dynamic Attention** | `src/federated/dynamic_attention.py` | Authority overlap with FLTrust → False Credit Assignment |
-| **Autoencoder (Novelty Detector)** | `src/models/networks.py:NoveltyDetector` | Unnecessary complexity; Focal Loss already handles imbalance |
-| **Fed+ Mixing** | `src/federated/fed_plus.py` | κ ≈ 0.997 → 99.7% personalization retained → global model stagnates |
+| Component                          | File                                     | Reason                                                              |
+| ---------------------------------- | ---------------------------------------- | ------------------------------------------------------------------- |
+| **Meta-Agent (Tier-2 old)**        | `src/agents/meta_agent.py`               | Overfitting on local test data (Meta-Agent Illusion)                |
+| **Dynamic Attention**              | `src/federated/dynamic_attention.py`     | Authority overlap with FLTrust → False Credit Assignment            |
+| **Autoencoder (Novelty Detector)** | `src/models/networks.py:NoveltyDetector` | Unnecessary complexity; Focal Loss already handles imbalance        |
+| **Fed+ Mixing**                    | `src/federated/fed_plus.py`              | κ ≈ 0.997 → 99.7% personalization retained → global model stagnates |
 
 ### 9.2 Bugs Fixed
 
-| Bug | File | Fix |
-|-----|------|-----|
-| **Trust Score Index** | `train.py` | `trust_scores` (selected-only) → `reputations` (K-length) |
-| **Empty server_delta** | `train.py` | Check `len(delta) > 0` instead of truthiness |
-| **Personalization Leakage** | `aggregator.py` | Global Start Principle: Δ = post − pre |
-| **Reward Design Smells** | `ids_env.py` | 12+ components → MCC-based reward |
-| **Scaler Leakage** | `preprocessor.py` | Fit scaler on train data ONLY |
-| **Feature Selection Bias** | `preprocessor.py` | RF trained on SMOTE-balanced data |
-| **Non-IID Overlap** | `preprocessor.py` | Sequential non-overlapping per-class pools |
-| **Decay > Growth** | `fed_trust.py` | growth=0.1 > decay=0.05 (was 0.05 < 0.1) |
+| Bug                         | File              | Fix                                                       |
+| --------------------------- | ----------------- | --------------------------------------------------------- |
+| **Trust Score Index**       | `train.py`        | `trust_scores` (selected-only) → `reputations` (K-length) |
+| **Empty server_delta**      | `train.py`        | Check `len(delta) > 0` instead of truthiness              |
+| **Personalization Leakage** | `aggregator.py`   | Global Start Principle: Δ = post − pre                    |
+| **Reward Design Smells**    | `ids_env.py`      | 12+ components → MCC-based reward                         |
+| **Scaler Leakage**          | `preprocessor.py` | Fit scaler on train data ONLY                             |
+| **Feature Selection Bias**  | `preprocessor.py` | RF trained on SMOTE-balanced data                         |
+| **Non-IID Overlap**         | `preprocessor.py` | Sequential non-overlapping per-class pools                |
+| **Decay > Growth**          | `fed_trust.py`    | growth=0.1 > decay=0.05 (was 0.05 < 0.1)                  |
 
 ### 9.3 Separation of Concerns
 
@@ -1589,44 +1673,43 @@ Round   V1 (EMA)    V2 (EMA)    V3 (EMA)
 
 ### 10.1 Expected Results (Baseline V3, 22 rounds)
 
-| Metric | Value | Notes |
-|--------|-------|-------|
-| **Accuracy** | 0.836 | Steady improvement from Round 1 (0.31) |
-| **F1-Score** | 0.804 | MCC-based reward drives balance |
-| **FPR** | 0.0004 | Near-zero false positives |
-| **MCC** | ~0.67 | Symmetric correlation |
-| **Critic Loss** | ~0.96 | Stable (no explosion) |
-| **Entropy** | 1.48 → 1.58 | Policy exploring sufficiently |
+| Metric          | Value       | Notes                                  |
+| --------------- | ----------- | -------------------------------------- |
+| **Accuracy**    | 0.836       | Steady improvement from Round 1 (0.31) |
+| **F1-Score**    | 0.804       | MCC-based reward drives balance        |
+| **FPR**         | 0.0004      | Near-zero false positives              |
+| **MCC**         | ~0.67       | Symmetric correlation                  |
+| **Critic Loss** | ~0.96       | Stable (no explosion)                  |
+| **Entropy**     | 1.48 → 1.58 | Policy exploring sufficiently          |
 
 ### 10.2 Federated vs Baseline Comparison
 
-| Metric | Baseline V3 | Federated (expected) | Notes |
-|--------|------------|---------------------|-------|
-| Accuracy | 0.836 | ~0.80-0.85 | FL handles Non-IID |
-| F1-Score | 0.804 | ~0.78-0.82 | FLTrust prevents degradation |
-| Communication | N/A | K_sel clients/round | RL reduces 8→4 |
-| Privacy | Centralized | Local training | FL advantage |
-| Byzantine Robustness | N/A | FLTrust guarantee | FL advantage |
+| Metric               | Baseline V3 | Federated (expected) | Notes                        |
+| -------------------- | ----------- | -------------------- | ---------------------------- |
+| Accuracy             | 0.836       | ~0.80-0.85           | FL handles Non-IID           |
+| F1-Score             | 0.804       | ~0.78-0.82           | FLTrust prevents degradation |
+| Communication        | N/A         | K_sel clients/round  | RL reduces 8→4               |
+| Privacy              | Centralized | Local training       | FL advantage                 |
+| Byzantine Robustness | N/A         | FLTrust guarantee    | FL advantage                 |
 
 ### 10.3 Module Reference
 
-| Module | File | Function |
-|--------|------|----------|
-| **PPO Agent** | `src/agents/ppo_agent.py` | Actor-Critic, GAE(λ=0.95), Focal Loss |
-| **Local Client** | `src/agents/local_client.py` | PPO agent + IDS environment wrapper |
-| **IDS Environment** | `src/environment/ids_env.py` | Gym-like MDP, MCC-based reward |
-| **FLTrust** | `src/federated/fed_trust.py` | Cosine similarity + temporal reputation |
-| **Aggregator** | `src/federated/aggregator.py` | FLTrust → Normalize → Weighted Average |
-| **RL Selector** | `src/federated/client_selector.py` | Bernoulli PPO, 7-feature state |
-| **CNNGRUActor** | `src/models/networks.py` | Conv1D → CBAM → GRU → Mean Pool → logits |
-| **Preprocessor** | `src/data/preprocessor.py` | ADASYN+RENN, RF features, Non-IID partition |
-| **Training Loop** | `src/train.py` | Federated orchestration, checkpoint, history JSON |
-| **Config** | `src/config.py` | Dataclass configs: PPO, FLTrust, Reward, Training |
+| Module              | File                               | Function                                          |
+| ------------------- | ---------------------------------- | ------------------------------------------------- |
+| **PPO Agent**       | `src/agents/ppo_agent.py`          | Actor-Critic, GAE(λ=0.95), Focal Loss             |
+| **Local Client**    | `src/agents/local_client.py`       | PPO agent + IDS environment wrapper               |
+| **IDS Environment** | `src/environment/ids_env.py`       | Gym-like MDP, MCC-based reward                    |
+| **FLTrust**         | `src/federated/fed_trust.py`       | Cosine similarity + temporal reputation           |
+| **Aggregator**      | `src/federated/aggregator.py`      | FLTrust → Normalize → Weighted Average            |
+| **RL Selector**     | `src/federated/client_selector.py` | Bernoulli PPO, 7-feature state                    |
+| **CNNGRUActor**     | `src/models/networks.py`           | Conv1D → CBAM → GRU → Mean Pool → logits          |
+| **Preprocessor**    | `src/data/preprocessor.py`         | ADASYN+RENN, RF features, Non-IID partition       |
+| **Training Loop**   | `src/train.py`                     | Federated orchestration, checkpoint, history JSON |
+| **Config**          | `src/config.py`                    | Dataclass configs: PPO, FLTrust, Reward, Training |
 
 ---
 
-*FedRL-IDS — Research project for Network Intrusion Detection in distributed IoT/IIoT environments using Federated Reinforcement Learning.*
-
+_FedRL-IDS — Research project for Network Intrusion Detection in distributed IoT/IIoT environments using Federated Reinforcement Learning._
 
 ---
 
