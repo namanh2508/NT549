@@ -58,9 +58,9 @@ DATASETS = {
         "color": "#58a6ff",
         "tag_bg": "#1f3a5f",
         "acc": 0.9110,
-        "f1": 0.9999,
+        "f1": 0.9350,
         "fpr": 0.0005,
-        "recall": 0.9999,
+        "recall": 0.9240,
     },
     "NSL-KDD": {
         "path": "outputs/outputs_nsl_kdd/training_history.json",
