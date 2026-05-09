@@ -29,7 +29,7 @@ NUM_CLIENTS = 10                    # Number of federated clients
 LOCAL_EPISODES = 8                  # Local RL episodes per round per client
 SAMPLE_LIMIT = 50000                # Max samples per CSV file
 SEED = 42
-DATASETS_TO_TRAIN = ["edge_iiot"]
+DATASETS_TO_TRAIN = ["nsl_kdd"]
 
 # ── BASELINE MODE ──────────────────────────────────────────────
 # Set RUN_MODE = "baseline" to run non-federated single-agent baseline

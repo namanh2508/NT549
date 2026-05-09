@@ -130,9 +130,9 @@ def export(pt_path, output_path, input_dim=13, action_dim=3,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", "-m", default="outputs/outputs_edge_iiot/best_model.pt")
-    parser.add_argument("--output", "-o", default="outputs/outputs_edge_iiot/model.onnx")
-    parser.add_argument("--dataset", default="edge_iiot")
+    parser.add_argument("--model", "-m", default="outputs/outputs_nsl_kdd/best_model.pt")
+    parser.add_argument("--output", "-o", default="outputs/outputs_nsl_kdd/model.onnx")
+    parser.add_argument("--dataset", default="nsl_kdd")
     args = parser.parse_args()
 
     seq_map = {"edge_iiot": 8, "nsl_kdd": 1, "iomt": 10, "unsw_nb15": 5}

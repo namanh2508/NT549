@@ -16,6 +16,7 @@ import numpy as np
 import onnxruntime as ort
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -25,6 +26,7 @@ from pydantic import BaseModel, Field
 ort_session: Optional[ort.InferenceSession] = None
 model_loaded = False
 onnx_path: Optional[str] = None
+_seq_len: int = 8  # detected from ONNX model at startup
 
 _metrics_lock = threading.Lock()
 _total_predictions = 0
@@ -77,11 +79,11 @@ class PredictResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load ONNX model at server startup."""
-    global ort_session, model_loaded, onnx_path
+    global ort_session, model_loaded, onnx_path, _seq_len
     default_paths = [
-        "outputs/outputs_edge_iiot/model.onnx",
+        "outputs/outputs_nsl_kdd/model.onnx",
         "outputs/federated/model.onnx",
-        "outputs/edge_iiot/model.onnx",
+        "outputs/nsl_kdd/model.onnx",
     ]
     for p in default_paths:
         if Path(p).exists():
@@ -92,7 +94,9 @@ async def lifespan(app: FastAPI):
                 )
                 model_loaded = True
                 onnx_path = p
-                print(f"[OK] ONNX model loaded: {p}")
+                # Detect seq_len from the ONNX model's first input shape
+                _seq_len = ort_session.get_inputs()[0].shape[1]  # e.g., 1 for NSL-KDD, 8 for Edge-IIoT
+                print(f"[OK] ONNX loaded from {p}, seq_len={_seq_len}")
                 break
             except Exception as e:
                 print(f"[ERROR] Failed to load {p}: {e}")
@@ -112,11 +116,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 
 def preprocess_flow(flow: FlowInput) -> np.ndarray:
-    """Normalize FlowInput and tile to [1, seq_len=8, feature_dim=13]."""
+    """Normalize FlowInput and tile to [1, seq_len, feature_dim=13]."""
     raw = np.array([[
         flow.packet_count, flow.byte_count, flow.duration,
         flow.src_port, flow.dst_port, flow.tcp_flags,
@@ -124,8 +136,8 @@ def preprocess_flow(flow: FlowInput) -> np.ndarray:
         flow.syn_count, flow.ack_count, flow.rst_count, flow.fin_count,
     ]], dtype=np.float32)
     scaled = (raw - FEATURE_MIN) / (FEATURE_MAX - FEATURE_MIN + 1e-8)
-    seq = np.tile(scaled, (8, 1))  # [8, 13]
-    return seq[np.newaxis, :, :]    # [1, 8, 13]
+    seq = np.tile(scaled, (_seq_len, 1))  # [seq_len, 13]
+    return seq[np.newaxis, :, :]    # [1, seq_len, 13]
 
 
 def run_inference(x: np.ndarray) -> tuple[str, float]:

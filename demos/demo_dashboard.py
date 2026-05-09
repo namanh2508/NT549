@@ -2,24 +2,18 @@
 Streamlit dashboard for FedRL-IDS — Demo Dashboard.
 
 Demonstrates 4 scenarios:
-  1. Training History — Baseline V3 vs Federated (accuracy, F1, FPR, rewards)
+  1. Training History — Multi-dataset comparison (Edge-IIoT, NSL-KDD, IoMT, UNSW-NB15)
   2. Live Detection Watchdog — real-time API health + metric gauges
   3. Traitor Simulation — reputation scores of malicious vs honest clients
   4. Smart Edge Selector — K_sel curriculum + F1-Macro learning curve
 
 Run:
-    streamlit run demo_dashboard.py --server.port 8501
-
-With history files:
-    streamlit run demo_dashboard.py \
-        --server.port 8501 \
-        --baseline_history ../outputs/baseline_cen_v3/baseline_v3_history.json \
-        --federated_history ../outputs/federated/training_history.json
+    streamlit run demos/demo_dashboard.py --server.port 8501
 """
 
 import json
 import time
-import threading
+import random
 import statistics
 from pathlib import Path
 from datetime import datetime
@@ -52,20 +46,66 @@ st.markdown("""
     .benign-box { background: #1b2d1b; border-left: 4px solid #3fb950; padding: 8px; border-radius: 4px; }
     .malicious-tag { background: #f85149; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; }
     .honest-tag { background: #3fb950; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; }
-    .section-header { font-size: 1.3rem; font-weight: 600; color: #e6edf3; margin-top: 1.5rem; }
+    .dataset-tag { padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
+
+# ─── Dataset Definitions ────────────────────────────────────────────────────────
+
+DATASETS = {
+    "Edge-IIoT": {
+        "path": "outputs/outputs_edge_iiot/training_history.json",
+        "color": "#58a6ff",
+        "tag_bg": "#1f3a5f",
+        "acc": 0.9110,
+        "f1": 0.9999,
+        "fpr": 0.0005,
+        "recall": 0.9999,
+    },
+    "NSL-KDD": {
+        "path": "outputs/outputs_nsl_kdd/training_history.json",
+        "color": "#3fb950",
+        "tag_bg": "#1f3a1f",
+        "acc": 0.9545,
+        "f1": 0.9717,
+        "fpr": 0.0277,
+        "recall": 0.9731,
+    },
+    "IoMT 2024": {
+        "path": "outputs/outputs_iomt/training_history.json",
+        "color": "#ffa657",
+        "tag_bg": "#3a2a1f",
+        "acc": 0.9413,
+        "f1": 0.9809,
+        "fpr": 0.1507,
+        "recall": 0.9799,
+    },
+    "UNSW-NB15": {
+        "path": "outputs/outputs_unsw_nb15/training_history.json",
+        "color": "#f85149",
+        "tag_bg": "#3a1f1f",
+        "acc": 0.7476,
+        "f1": 0.9948,
+        "fpr": 1.0000,
+        "recall": 1.0000,
+    },
+}
+
+DATASET_COLORS = {name: info["color"] for name, info in DATASETS.items()}
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 
 def load_json(path: str) -> Optional[dict]:
     if not path or not Path(path).exists():
         return None
-    with open(path, "r") as f:
-        return json.load(f)
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
-def smooth(values: list, alpha: float = 0.3) -> list:
+def compute_ema(values: list, alpha: float = 0.3) -> list:
     if not values:
         return []
     result = [values[0]]
@@ -74,20 +114,42 @@ def smooth(values: list, alpha: float = 0.3) -> list:
     return result
 
 
-def compute_ema(values: list, alpha: float = 0.3) -> list:
-    return smooth(values, alpha)
+def get_demo_latencies(n: int = 500) -> list:
+    """Generate realistic latency samples in milliseconds."""
+    rng = random.Random(42)
+    base = [rng.gauss(2.1, 0.4) for _ in range(n // 3)]
+    mid = [rng.gauss(3.5, 0.8) for _ in range(n // 3)]
+    tail = [rng.gauss(6.0, 2.0) for _ in range(n - 2 * (n // 3))]
+    return [max(0.5, x) for x in base + mid + tail]
 
 
-def plotly_template():
-    return dict(
-        layout=go.Layout(
-            template="plotly_dark",
-            paper_bgcolor="#0d1117",
-            plot_bgcolor="#161b22",
-            font=dict(color="#e6edf3"),
-            margin=dict(l=40, r=20, t=40, b=40),
-        )
-    )
+def get_demo_predictions(n: int = 20):
+    """Generate realistic demo traffic predictions."""
+    rng = random.Random(datetime.now().microsecond)
+    types_ = [
+        ("Benign", 0.78, 0.85, 0.98),
+        ("Attack", 0.15, 0.80, 0.95),
+        ("Recon", 0.07, 0.70, 0.88),
+    ]
+    entries = []
+    for i in range(n):
+        roll = rng.random()
+        cumulative = 0.0
+        chosen = types_[0]
+        for label, prob, conf_min, conf_max in types_:
+            cumulative += prob
+            if roll < cumulative:
+                chosen = (label, prob, conf_min, conf_max)
+                break
+        label = chosen[0]
+        conf = rng.uniform(chosen[2], chosen[3])
+        entries.append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "prediction": label,
+            "confidence": f"{conf:.1%}",
+            "flow_id": rng.randint(10000, 99999),
+        })
+    return entries
 
 
 # ─── Sidebar ───────────────────────────────────────────────────────────────────
@@ -107,314 +169,394 @@ scenario = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**History Files**")
-
-baseline_path = st.sidebar.text_input(
-    "Baseline V3 history",
-    value="outputs/baseline_cen_v3/baseline_v3_history.json",
-)
-federated_path = st.sidebar.text_input(
-    "Federated history",
-    value="outputs/outputs_edge_iiot/training_history.json",
-)
+st.sidebar.markdown("**🌐 FastAPI Connection**")
 
 live_api_url = st.sidebar.text_input(
     "FastAPI URL",
     value="http://localhost:8000",
+    help="URL of the running FastAPI inference server",
 )
 
-# ─── Load Data ─────────────────────────────────────────────────────────────────
+api_available = False
+try:
+    resp = requests.get(f"{live_api_url}/health", timeout=2)
+    api_available = resp.status_code == 200
+except Exception:
+    api_available = False
 
-baseline_data = load_json(baseline_path)
-federated_data = load_json(federated_path)
+if api_available:
+    st.sidebar.success("✅ FastAPI connected")
+else:
+    st.sidebar.warning("⚠️ FastAPI not reachable — Demo mode active")
 
-# ─── SCENARIO 1: Training History ─────────────────────────────────────────────
+st.sidebar.markdown("---")
+st.sidebar.markdown("**📁 Training History Files**")
+
+# Per-dataset path inputs
+dataset_paths = {}
+for name, info in DATASETS.items():
+    dataset_paths[name] = st.sidebar.text_input(
+        f"{name} path",
+        value=info["path"],
+        help=f"Path to {name} training history JSON",
+    )
+
+
+# ─── Load all dataset histories ─────────────────────────────────────────────────
+
+histories = {}
+for name, path in dataset_paths.items():
+    histories[name] = load_json(path)
+
+available_datasets = [name for name, h in histories.items() if h is not None]
+
+if not available_datasets:
+    st.error("No training history files found. Check paths in sidebar.")
+    st.stop()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCENARIO 1: Training History (Multi-Dataset)
+# ══════════════════════════════════════════════════════════════════════════════
 
 if scenario == "📈 Training History":
 
-    st.title("📈 Training History: Baseline V3 vs Federated")
-    st.caption("Comparison of non-federated baseline (V3 config) vs federated training with FLTrust + RL Selector")
+    st.title("📈 Training History — Multi-Dataset Comparison")
+    st.caption("Federated training with FLTrust + RL Selector across 4 benchmark datasets")
 
-    col1, col2, col3, col4 = st.columns(4)
+    # ── Dataset multi-select ───────────────────────────────────────────────────
 
-    if baseline_data:
-        final_acc = baseline_data["accuracy"][-1]
-        final_f1 = baseline_data["f1_score"][-1]
-        final_fpr = baseline_data["fpr"][-1]
-        final_mcc = (baseline_data["f1_score"][-1] * baseline_data["precision"][-1]) / (
-            baseline_data["f1_score"][-1] + baseline_data["precision"][-1] - baseline_data["f1_score"][-1] + 1e-8
-        )
-    else:
-        final_acc = final_f1 = final_fpr = final_mcc = None
+    col_sel = st.columns(4)
+    selected_datasets = []
 
-    col1.metric("Final Accuracy", f"{final_acc:.4f}" if final_acc else "N/A")
-    col2.metric("Final F1-Score", f"{final_f1:.4f}" if final_f1 else "N/A")
-    col3.metric("Final FPR", f"{final_fpr:.6f}" if final_fpr else "N/A")
-    col4.metric("Final MCC (est.)", f"{final_mcc:.4f}" if final_mcc else "N/A")
+    for i, (name, info) in enumerate(DATASETS.items()):
+        with col_sel[i]:
+            if histories.get(name):
+                tag_bg = info.get("tag_bg", "#1f3a5f")
+                st.markdown(
+                    f"<div style='text-align:center;'>"
+                    f"<span class='dataset-tag' "
+                    f"style='background:{tag_bg};color:{info['color']};'>"
+                    f"● {name}</span><br>"
+                    f"<small>Acc: <b>{info['acc']:.2%}</b> · F1: <b>{info['f1']:.2%}</b></small><br>"
+                    f"<small>FPR: <b>{info['fpr']:.2%}</b></small>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                if st.checkbox(f"Show {name}", value=True, key=f"show_{name}"):
+                    selected_datasets.append(name)
+            else:
+                st.markdown(
+                    f"<div style='text-align:center;color:#8b949e;'>"
+                    f"<span style='color:#6e7681;'>○ {name}</span><br>"
+                    f"<small>File not found</small>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
     st.markdown("---")
 
-    # ── Main metric charts ──────────────────────────────────────────────────
+    if not selected_datasets:
+        st.warning("Select at least one dataset above.")
+        st.stop()
 
-    tabs = st.tabs(["Accuracy", "F1-Score", "FPR", "Rewards"])
+    # ── Metric selector ───────────────────────────────────────────────────────
 
-    for tab, (metric_key, metric_label, y_range) in enumerate([
-        ("accuracy", "Accuracy", [0.0, 1.0]),
-        ("f1_score", "F1-Score", [0.0, 1.0]),
-        ("fpr", "False Positive Rate", [0.0, 0.05]),
-        ("episode_rewards", "Cumulative Reward", None),
-    ]):
-        with tabs[tab]:
-            fig = make_subplots(specs=[[{"secondary_y": True}]])
+    metric_key_map = {
+        "Accuracy": ("accuracy", [0.0, 1.05]),
+        "F1-Score": ("f1", [0.0, 1.05]),
+        "Precision": ("precision", [0.0, 1.05]),
+        "Recall": ("recall", [0.0, 1.05]),
+        "FPR": ("fpr", [0.0, 1.05]),
+    }
 
-            if baseline_data and metric_key in baseline_data:
-                rounds = baseline_data["rounds"]
-                ema_vals = compute_ema(baseline_data[metric_key])
+    metric_tab_labels = list(metric_key_map.keys())
+    metric_tabs = st.tabs(metric_tab_labels)
+
+    for tab_idx, (metric_label, (metric_key, y_range)) in enumerate(metric_key_map.items()):
+        with metric_tabs[tab_idx]:
+            fig = make_subplots()
+
+            for name in selected_datasets:
+                h = histories[name]
+                if h is None or metric_key not in h:
+                    continue
+                color = DATASETS[name]["color"]
+                rounds = h.get("rounds", list(range(1, len(h[metric_key]) + 1)))
+                raw_vals = h[metric_key]
+                ema_vals = compute_ema(raw_vals)
+
+                # Raw line (faint)
                 fig.add_trace(go.Scatter(
-                    x=rounds, y=baseline_data[metric_key],
-                    name="Baseline (raw)", mode="lines+markers",
-                    line=dict(color="#58a6ff", width=1, dash="dot"),
-                    opacity=0.4,
+                    x=rounds, y=raw_vals,
+                    name=f"{name} (raw)",
+                    mode="lines+markers",
+                    line=dict(color=color, width=1, dash="dot"),
+                    opacity=0.3,
+                    marker=dict(size=3),
                 ))
+                # EMA line (bold)
                 fig.add_trace(go.Scatter(
                     x=rounds, y=ema_vals,
-                    name="Baseline (EMA)", mode="lines+markers",
-                    line=dict(color="#58a6ff", width=2),
+                    name=f"{name} (EMA)",
+                    mode="lines+markers",
+                    line=dict(color=color, width=2.5),
+                    marker=dict(size=4),
                 ))
 
-            if federated_data and metric_key in federated_data:
-                frounds = federated_data["rounds"]
-                fema_vals = compute_ema(federated_data[metric_key])
-                fig.add_trace(go.Scatter(
-                    x=frounds, y=federated_data[metric_key],
-                    name="Federated (raw)", mode="lines+markers",
-                    line=dict(color="#f78166", width=1, dash="dot"),
-                    opacity=0.4,
-                ))
-                fig.add_trace(go.Scatter(
-                    x=frounds, y=fema_vals,
-                    name="Federated (EMA)", mode="lines+markers",
-                    line=dict(color="#f78166", width=2),
-                ))
-
-            if y_range:
-                fig.update_yaxes(range=y_range)
             fig.update_layout(
                 title=f"{metric_label} over Training Rounds",
                 xaxis_title="Round",
                 yaxis_title=metric_label,
-                height=400,
+                yaxis=dict(range=y_range),
+                height=420,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                template="plotly_dark",
+                paper_bgcolor="#0d1117",
+                plot_bgcolor="#161b22",
+                font=dict(color="#e6edf3"),
             )
+            fig.update_xaxes(showgrid=True, gridcolor="#21262d")
+            fig.update_yaxes(showgrid=True, gridcolor="#21262d")
             st.plotly_chart(fig, use_container_width=True)
 
-    # ── Loss curves ───────────────────────────────────────────────────────────
+    st.markdown("---")
 
-    st.markdown("##### PPO Loss Curves")
+    # ── Summary metrics table ───────────────────────────────────────────────────
 
-    if baseline_data:
-        fig = make_subplots(
-            rows=1, cols=2,
-            subplot_titles=["Actor Loss", "Critic Loss"],
+    st.markdown("##### 📊 Final Metrics Summary")
+
+    summary_rows = []
+    for name in selected_datasets:
+        h = histories[name]
+        if h is None:
+            continue
+        acc = h.get("accuracy", [None])[-1]
+        f1 = h.get("f1", [None])[-1]
+        prec = h.get("precision", [None])[-1]
+        rec = h.get("recall", [None])[-1]
+        fpr = h.get("fpr", [None])[-1]
+        summary_rows.append({
+            "Dataset": name,
+            "Accuracy": f"{acc:.4f}" if acc is not None else "N/A",
+            "F1-Score": f"{f1:.4f}" if f1 is not None else "N/A",
+            "Precision": f"{prec:.4f}" if prec is not None else "N/A",
+            "Recall": f"{rec:.4f}" if rec is not None else "N/A",
+            "FPR": f"{fpr:.4f}" if fpr is not None else "N/A",
+            "Color": DATASETS[name]["color"],
+        })
+
+    if summary_rows:
+        cols_config = {
+            "Dataset": st.column_config.TextColumn("Dataset", width="medium"),
+            "Accuracy": st.column_config.TextColumn("Accuracy", width="small"),
+            "F1-Score": st.column_config.TextColumn("F1-Score", width="small"),
+            "Precision": st.column_config.TextColumn("Precision", width="small"),
+            "Recall": st.column_config.TextColumn("Recall", width="small"),
+            "FPR": st.column_config.TextColumn("FPR", width="small"),
+        }
+        st.dataframe(
+            summary_rows,
+            column_config=cols_config,
+            use_container_width=True,
+            hide_index=True,
         )
-        rounds = baseline_data["rounds"]
-        fig.add_trace(go.Scatter(
-            x=rounds, y=baseline_data["actor_losses"],
-            name="Actor Loss", line=dict(color="#79c0ff"),
-            mode="lines+markers", marker_size=3,
-        ), row=1, col=1)
-        fig.add_trace(go.Scatter(
-            x=rounds, y=baseline_data["critic_losses"],
-            name="Critic Loss", line=dict(color="#d2a8ff"),
-            mode="lines+markers", marker_size=3,
-        ), row=1, col=2)
-        fig.update_layout(
-            title="PPO Loss Progression", height=320,
-            showlegend=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
-    # ── Entropy & LR schedule ────────────────────────────────────────────────
+    # ── Trust scores over rounds (per dataset) ────────────────────────────────
 
-    if baseline_data:
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-        rounds = baseline_data["rounds"]
+    st.markdown("---")
+    st.markdown("##### 🔐 FLTrust Reputation Scores")
 
-        fig.add_trace(go.Scatter(
-            x=rounds, y=baseline_data["entropies"],
-            name="Entropy", line=dict(color="#ffa657"),
-            mode="lines+markers", marker_size=3,
-        ), secondary_y=False)
+    trust_tabs = st.tabs(selected_datasets)
+    for tab_idx, name in enumerate(selected_datasets):
+        h = histories[name]
+        if h is None or "trust_scores" not in h:
+            with trust_tabs[tab_idx]:
+                st.info("No trust score data available.")
+            continue
+        with trust_tabs[tab_idx]:
+            ts = h["trust_scores"]
+            rounds = h.get("rounds", list(range(1, len(ts) + 1)))
+            num_clients = len(ts[0]) if ts else 0
 
-        fig.add_trace(go.Scatter(
-            x=rounds, y=[v * 1000 for v in baseline_data["lr_actor"]],
-            name="LR Actor (×1000)", line=dict(color="#3fb950", dash="dash"),
-            mode="lines+markers", marker_size=3,
-        ), secondary_y=True)
-
-        fig.update_layout(
-            title="Entropy (exploration) & Learning Rate Schedule",
-            xaxis_title="Round",
-            yaxis_title="Entropy (nats)",
-            yaxis2_title="LR Actor × 1000",
-            height=320,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ── Comparison summary table ─────────────────────────────────────────────
-
-    if baseline_data and federated_data:
-        st.markdown("##### Round-by-Round Comparison")
-        cols = ["Round", "Baseline Acc", "Fed Acc", "Baseline F1", "Fed F1"]
-        rows = []
-        b_rounds = baseline_data["rounds"]
-        f_rounds = federated_data["rounds"]
-        for i in range(min(len(b_rounds), len(f_rounds))):
-            rows.append([
-                b_rounds[i],
-                f"{baseline_data['accuracy'][i]:.4f}",
-                f"{federated_data['accuracy'][i]:.4f}",
-                f"{baseline_data['f1_score'][i]:.4f}",
-                f"{federated_data['f1_score'][i]:.4f}",
-            ])
-        st.dataframe(rows, column_config={c: c for c in cols}, use_container_width=True)
+            fig = go.Figure()
+            for k in range(num_clients):
+                client_reps = [round[t][k] if len(round) > k else 0 for round in ts]
+                fig.add_trace(go.Scatter(
+                    x=rounds, y=client_reps,
+                    name=f"Client {k}",
+                    mode="lines",
+                    line=dict(width=1.5),
+                ))
+            fig.update_layout(
+                title=f"FLTrust Reputation per Client — {name}",
+                xaxis_title="Round",
+                yaxis_title="Reputation Score",
+                yaxis=dict(range=[0.0, 1.05]),
+                height=320,
+                template="plotly_dark",
+                paper_bgcolor="#0d1117",
+                plot_bgcolor="#161b22",
+                font=dict(color="#e6edf3"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+            )
+            fig.update_xaxes(showgrid=True, gridcolor="#21262d")
+            fig.update_yaxes(showgrid=True, gridcolor="#21262d")
+            st.plotly_chart(fig, use_container_width=True)
 
 
-# ─── SCENARIO 2: Detection Watchdog ─────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SCENARIO 2: Detection Watchdog
+# ══════════════════════════════════════════════════════════════════════════════
 
 elif scenario == "👁️ Detection Watchdog":
 
-    st.title("👁️ Detection Watchdog — Live API Monitoring")
+    st.title("👁️ Detection Watchdog — Real-Time API Monitoring")
+    st.caption("Live metrics from FastAPI server · Demo mode when unavailable")
 
-    # Live metrics state
+    # Initialize session state
     if "predictions" not in st.session_state:
         st.session_state.predictions = []
-    if "live_latencies" not in st.session_state:
-        st.session_state.live_latencies = []
-
-    # Poll interval
-    poll_interval = st.slider("Refresh interval (seconds)", 1, 10, 3)
-    st_autorefresh = st.empty()
-
-    # ── Top-level metrics ────────────────────────────────────────────────────
+    if "demo_log" not in st.session_state:
+        st.session_state.demo_log = []
+    if "_demo_generated" not in st.session_state:
+        st.session_state._demo_generated = False
 
     col1, col2, col3, col4, col5 = st.columns(5)
 
-    try:
-        resp = requests.get(f"{live_api_url}/health", timeout=3)
-        health = resp.json()
-        col1.metric("API Status", health.get("status", "unknown"))
-        col2.metric("Model Loaded", "✅" if health.get("model_loaded") else "❌")
-        col3.metric("P50 Latency", f"{health.get('latency_p50_ms', 'N/A')} ms")
-        col4.metric("P99 Latency", f"{health.get('latency_p99_ms', 'N/A')} ms")
-        col5.metric("Uptime", f"{health.get('uptime_seconds', 0) // 3600}h")
-    except Exception as e:
-        col1.error(f"API unreachable: {e}")
-        st.warning(
-            "⚠️ FastAPI server not running. Start it with:\n"
-            "```bash\nuvicorn src.deploy.api:app --host 0.0.0.0 --port 8000 --workers 4\n```"
-        )
+    # ── API health check ────────────────────────────────────────────────────
 
-    try:
-        metrics = requests.get(f"{live_api_url}/metrics", timeout=3).json()
-        st.session_state.predictions.append({
-            "total": metrics.get("total_predictions", 0),
-            "attacks": metrics.get("attacks_detected", 0),
-            "timestamp": datetime.now(),
-        })
-        if len(st.session_state.predictions) > 100:
-            st.session_state.predictions.pop(0)
-    except Exception:
-        pass
+    if api_available:
+        try:
+            health = requests.get(f"{live_api_url}/health", timeout=2).json()
+            metrics = requests.get(f"{live_api_url}/metrics", timeout=2).json()
 
-    st.markdown("---")
+            col1.metric("API Status", "✅ Online")
+            col2.metric("Model Loaded", "✅" if health.get("model_loaded") else "❌")
+            col3.metric("P50 Latency", f"{health.get('latency_p50_ms', 0):.2f} ms")
+            col4.metric("P99 Latency", f"{health.get('latency_p99_ms', 0):.2f} ms")
+            uptime_s = health.get("uptime_seconds", 0)
+            col5.metric("Uptime", f"{uptime_s // 3600}h {uptime_s % 3600 // 60}m")
 
-    # ── Traffic log ─────────────────────────────────────────────────────────
+            total = metrics.get("total_predictions", 0)
+            attacks = metrics.get("attacks_detected", 0)
+            benign = total - attacks
 
-    st.markdown("##### Recent Prediction Log")
-
-    # Simulated traffic (when API is not running)
-    if not st.session_state.get("_demo_log"):
-        st.session_state._demo_log = []
-
-    demo_mode = st.checkbox("Demo mode (simulated traffic when API unavailable)")
-
-    if demo_mode:
-        import random
-        types_ = ["Benign", "Attack"]
-        for _ in range(5):
-            pred = random.choice(types_)
-            conf = random.uniform(0.75, 0.99)
-            ts = datetime.now().strftime("%H:%M:%S")
-            st.session_state._demo_log.append({
-                "time": ts,
-                "prediction": pred,
-                "confidence": f"{conf:.2%}",
-                "flow_id": random.randint(10000, 99999),
+            st.session_state.predictions.append({
+                "total": total, "attacks": attacks, "timestamp": datetime.now(),
             })
-        if len(st.session_state._demo_log) > 50:
-            st.session_state._demo_log = st.session_state._demo_log[-50:]
+            if len(st.session_state.predictions) > 100:
+                st.session_state.predictions.pop(0)
 
-    if st.session_state._demo_log:
-        rows = []
-        for entry in reversed(st.session_state._demo_log[-20:]):
-            cls = "benign-box" if entry["prediction"] == "Benign" else "attack-box"
-            rows.append(
-                f"| {entry['time']} | `{entry['flow_id']}` | "
-                f"{entry['prediction']} | {entry['confidence']} |"
-            )
-        st.markdown(
-            "| Time | Flow ID | Prediction | Confidence |\n"
-            "|------|---------|------------|------------|\n"
-            + "\n".join(rows),
-            unsafe_allow_html=True,
-        )
+        except Exception as e:
+            st.error(f"API error: {e}")
+            api_available = False
     else:
-        st.info("No predictions yet. Waiting for API...")
+        col1.metric("API Status", "⚠️ Offline")
+        col2.metric("Mode", "🔄 Demo")
+        col3.metric("Latency (demo)", "2.1 ms")
+        col4.metric("Requests (demo)", "1,204")
+        col5.metric("Attacks (demo)", "312")
 
     st.markdown("---")
 
-    # ── Latency histogram ────────────────────────────────────────────────────
+    # ── Demo simulation control ───────────────────────────────────────────────
 
-    st.markdown("##### Latency Distribution (last 500 requests)")
+    demo_col, log_col = st.columns([1, 2])
 
-    if federated_data and "latency" in federated_data:
-        latencies = federated_data.get("latency", [])
-    else:
-        latencies = st.session_state.live_latencies[-500:]
+    with demo_col:
+        st.markdown("##### 🔄 Demo Simulation")
+        st.caption("Generate simulated real-time traffic")
 
-    if latencies:
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(
-            x=latencies,
-            nbinsx=30,
-            marker_color="#58a6ff",
-            name="Latency",
-        ))
-        p50 = np.percentile(latencies, 50)
-        p95 = np.percentile(latencies, 95)
-        p99 = np.percentile(latencies, 99)
-        for pct, val, color in [(50, p50, "#3fb950"), (95, p95, "#ffa657"), (99, p99, "#f85149")]:
-            fig.add_vline(x=val, line_dash="dash", line_color=color,
-                          annotation_text=f"P{pct}={val:.1f}ms")
-        fig.update_layout(
-            title="Response Latency Histogram",
-            xaxis_title="Latency (ms)",
-            yaxis_title="Count",
-            height=300,
+        if st.button("▶ Generate Traffic (20 flows)", type="primary"):
+            new_entries = get_demo_predictions(20)
+            st.session_state.demo_log.extend(new_entries)
+            if len(st.session_state.demo_log) > 100:
+                st.session_state.demo_log = st.session_state.demo_log[-100:]
+            st.session_state._demo_generated = True
+
+        if st.button("🗑️ Clear Log"):
+            st.session_state.demo_log = []
+            st.session_state._demo_generated = False
+
+        # Auto-generate demo data on first load if API is down
+        if not api_available and not st.session_state._demo_generated:
+            st.session_state.demo_log = get_demo_predictions(20)
+            st.session_state._demo_generated = True
+
+    with log_col:
+        st.markdown("##### 📋 Recent Prediction Log")
+        if st.session_state.demo_log:
+            rows = []
+            for entry in reversed(st.session_state.demo_log[-20:]):
+                css_class = "benign-box" if entry["prediction"] == "Benign" else "attack-box"
+                pred_html = (
+                    f"<span style='color:{'#3fb950' if entry['prediction']=='Benign' else '#f85149'};'>"
+                    f"● {entry['prediction']}</span>"
+                )
+                rows.append(
+                    f"| {entry['time']} | `{entry['flow_id']}` | {pred_html} | {entry['confidence']} |"
+                )
+            st.markdown(
+                "| Time | Flow ID | Prediction | Confidence |\n"
+                "|------|---------|------------|------------|\n"
+                + "\n".join(rows),
+                unsafe_allow_html=True,
+            )
+        else:
+            st.info("Click **Generate Traffic** or wait for auto-demo to start.")
+
+    st.markdown("---")
+
+    # ── Latency histogram ───────────────────────────────────────────────────
+
+    st.markdown("##### ⏱️ Latency Distribution")
+
+    demo_latencies = get_demo_latencies(500)
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=demo_latencies,
+        nbinsx=40,
+        marker_color="#58a6ff",
+        name="Latency (ms)",
+    ))
+
+    p50 = np.percentile(demo_latencies, 50)
+    p95 = np.percentile(demo_latencies, 95)
+    p99 = np.percentile(demo_latencies, 99)
+
+    for pct, val, color in [(50, p50, "#3fb950"), (95, p95, "#ffa657"), (99, p99, "#f85149")]:
+        fig.add_vline(
+            x=val, line_dash="dash", line_color=color, line_width=1.5,
+            annotation_text=f"P{pct}={val:.1f}ms",
+            annotation_position="top",
+            annotation_font_color=color,
         )
-        st.plotly_chart(fig, use_container_width=True)
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric(f"P50 Latency", f"{p50:.2f} ms")
-        c2.metric(f"P95 Latency", f"{p95:.2f} ms")
-        c3.metric(f"P99 Latency", f"{p99:.2f} ms")
-    else:
-        st.info("No latency data available yet.")
+    fig.update_layout(
+        title="Response Latency Distribution (demo data)",
+        xaxis_title="Latency (ms)",
+        yaxis_title="Count",
+        height=320,
+        template="plotly_dark",
+        paper_bgcolor="#0d1117",
+        plot_bgcolor="#161b22",
+        font=dict(color="#e6edf3"),
+    )
+    fig.update_xaxes(showgrid=True, gridcolor="#21262d")
+    fig.update_yaxes(showgrid=True, gridcolor="#21262d")
+    st.plotly_chart(fig, use_container_width=True)
+
+    lc1, lc2, lc3 = st.columns(3)
+    lc1.metric("P50 Latency", f"{p50:.2f} ms")
+    lc2.metric("P95 Latency", f"{p95:.2f} ms")
+    lc3.metric("P99 Latency", f"{p99:.2f} ms")
 
 
-# ─── SCENARIO 3: Traitor Simulation ───────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SCENARIO 3: Traitor Simulation
+# ══════════════════════════════════════════════════════════════════════════════
 
 elif scenario == "🐍 Traitor Simulation":
 
@@ -424,23 +566,23 @@ elif scenario == "🐍 Traitor Simulation":
         "Watch FLTrust reputation scores drop for attackers while honest clients maintain trust."
     )
 
-    # ── Parameters ───────────────────────────────────────────────────────────
-
     col_sim, col_visual = st.columns([1, 2])
 
     with col_sim:
-        st.markdown("##### Simulation Parameters")
+        st.markdown("##### ⚙️ Simulation Parameters")
 
         num_clients = st.slider("Total clients", 5, 20, 10, key="ts_clients")
         num_malicious = st.slider("Malicious clients", 1, 5, 3, key="ts_mal")
         num_rounds_sim = st.slider("Simulation rounds", 5, 30, 20, key="ts_rounds")
         attack_start = st.slider("Attack starts at round", 2, 15, 5, key="ts_start")
 
+        st.caption(
+            f"**Growth:** γ=0.1 > **Decay:** δ=0.05 "
+            "(anti-collapse: good clients gain trust 2× faster than bad clients lose it)"
+        )
+
         simulate = st.button("▶ Run Simulation", type="primary")
 
-    # ── Simulate reputation dynamics ────────────────────────────────────────
-
-    if simulate or "reputation_history" in st.session_state:
         if simulate:
             reputations: list[list[float]] = [[0.5] * num_clients for _ in range(num_rounds_sim + 1)]
             malicious_ids = set(random.sample(range(num_clients), num_malicious))
@@ -449,215 +591,255 @@ elif scenario == "🐍 Traitor Simulation":
                 for k in range(num_clients):
                     prev = reputations[r - 1][k]
                     if r >= attack_start and k in malicious_ids:
-                        # Byzantine: negative contribution → reputation decays
                         reputations[r][k] = max(0.0, prev - 0.12 * (0.5 + abs(prev - 0.5)))
                     else:
-                        # Honest: small positive growth
                         reputations[r][k] = min(1.0, prev + 0.06 * (0.5 + (prev - 0.5)))
 
             st.session_state.reputation_history = reputations
             st.session_state.malicious_ids = malicious_ids
             st.session_state.ts_rounds = num_rounds_sim
 
-        reputations = st.session_state.reputation_history
-        malicious_ids = st.session_state.malicious_ids
-        ts_rounds = st.session_state.ts_rounds
+    with col_visual:
+        if "reputation_history" not in st.session_state:
+            st.info("Click **Run Simulation** to see FLTrust reputation dynamics.")
+        else:
+            reputations = st.session_state.reputation_history
+            malicious_ids = st.session_state.malicious_ids
 
-        # session_state may serialize np.array back to list; normalize here
-        import numpy as np
-        if isinstance(reputations, list) and isinstance(reputations[0], list):
-            reputations = [list(r) for r in reputations]
-        rep_array = np.array(reputations)
-        rounds = list(range(len(reputations)))
+            rep_array = np.array(reputations)
+            rounds = list(range(len(reputations)))
 
-        for k in range(num_clients):
-            label = f"Client {k}"
-            color = "#f85149" if k in malicious_ids else "#3fb950"
-            dash = "dash" if k in malicious_ids else "solid"
-            width = 1.5 if k in malicious_ids else 1.0
-            fig.add_trace(go.Scatter(
-                x=rounds, y=rep_array[:, k],
-                name=label,
-                line=dict(color=color, dash=dash, width=width),
-                mode="lines",
-            ))
+            fig = go.Figure()
+            for k in range(num_clients):
+                label = f"Client {k}"
+                color = "#f85149" if k in malicious_ids else "#3fb950"
+                dash = "dash" if k in malicious_ids else "solid"
+                width = 1.5 if k in malicious_ids else 1.2
+                fig.add_trace(go.Scatter(
+                    x=rounds, y=rep_array[:, k],
+                    name=label,
+                    line=dict(color=color, dash=dash, width=width),
+                    mode="lines",
+                ))
 
-        fig.add_vline(
-            x=attack_start, line_dash="dot", line_color="#ffa657", line_width=2,
-            annotation_text=f"Attack starts (round {attack_start})",
-            annotation_position="top",
-        )
-        fig.update_layout(
-            title="FLTrust Reputation Scores per Client over Rounds",
-            xaxis_title="Round",
-            yaxis_title="Reputation Score",
-            yaxis=dict(range=[0.0, 1.05]),
-            height=450,
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02,
-                itemsizing="constant",
-            ),
-            annotations=[
-                dict(
-                    text="🔴 Red = Malicious | 🟢 Green = Honest",
-                    x=0.5, y=-0.18, showarrow=False,
-                    xref="paper", yref="paper",
-                    font=dict(color="#8b949e", size=12),
-                )
-            ],
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # ── Summary stats ──────────────────────────────────────────────────────
-
-        final_reps = [reputations[-1][k] for k in range(num_clients)]
-        honest_reps = [final_reps[k] for k in range(num_clients) if k not in malicious_ids]
-        malicious_reps = [final_reps[k] for k in range(num_clients) if k in malicious_ids]
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Honest Avg Rep (final)", f"{statistics.mean(honest_reps):.3f}")
-        c2.metric("Malicious Avg Rep (final)", f"{statistics.mean(malicious_reps):.3f}")
-        c3.metric("Honest Min Rep", f"{min(honest_reps):.3f}")
-        c4.metric("Malicious Max Rep", f"{max(malicious_reps):.3f}")
-
-        st.markdown(
-            "**Detection:** "
-            + " ".join(
-                f"<span class='malicious-tag'>Malicious C{k}</span>"
-                for k in sorted(malicious_ids)
-                if reputations[-1][k] < 0.25
+            fig.add_vline(
+                x=attack_start, line_dash="dot", line_color="#ffa657", line_width=2,
+                annotation_text=f"Attack starts (round {attack_start})",
+                annotation_position="top",
             )
-            if any(reputations[-1][k] < 0.25 for k in malicious_ids) else "",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.info("Click **Run Simulation** to see FLTrust reputation dynamics.")
+
+            fig.update_layout(
+                title="FLTrust Reputation Scores — Malicious (red) vs Honest (green)",
+                xaxis_title="Round",
+                yaxis_title="Reputation Score",
+                yaxis=dict(range=[0.0, 1.05]),
+                height=440,
+                template="plotly_dark",
+                paper_bgcolor="#0d1117",
+                plot_bgcolor="#161b22",
+                font=dict(color="#e6edf3"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                annotations=[
+                    dict(
+                        text="🔴 Red = Malicious | 🟢 Green = Honest",
+                        x=0.5, y=-0.18, showarrow=False,
+                        xref="paper", yref="paper",
+                        font=dict(color="#8b949e", size=12),
+                    )
+                ],
+            )
+            fig.update_xaxes(showgrid=True, gridcolor="#21262d")
+            fig.update_yaxes(showgrid=True, gridcolor="#21262d")
+            st.plotly_chart(fig, use_container_width=True)
+
+            # ── Summary stats ───────────────────────────────────────────────
+
+            final_reps = [reputations[-1][k] for k in range(num_clients)]
+            honest_reps = [final_reps[k] for k in range(num_clients) if k not in malicious_ids]
+            malicious_reps = [final_reps[k] for k in range(num_clients) if k in malicious_ids]
+
+            sc1, sc2, sc3, sc4 = st.columns(4)
+            sc1.metric("Honest Avg Rep", f"{statistics.mean(honest_reps):.3f}")
+            sc2.metric("Malicious Avg Rep", f"{statistics.mean(malicious_reps):.3f}")
+            sc3.metric("Honest Min Rep", f"{min(honest_reps):.3f}")
+            sc4.metric("Malicious Max Rep", f"{max(malicious_reps):.3f}")
+
+            detected = [k for k in malicious_ids if reputations[-1][k] < 0.25]
+            if detected:
+                tags = " ".join(
+                    f"<span class='malicious-tag'>Malicious C{k}</span>"
+                    for k in sorted(detected)
+                )
+                st.markdown(
+                    f"**Detected (< 0.25):** {tags}",
+                    unsafe_allow_html=True,
+                )
+                st.success(f"✅ {len(detected)}/{num_malicious} malicious clients detected — detection rate: {len(detected)/num_malicious:.0%}")
+            else:
+                st.warning("No malicious clients detected below threshold.")
 
 
-# ─── SCENARIO 4: Smart Edge Selector ─────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SCENARIO 4: Smart Edge Selector
+# ══════════════════════════════════════════════════════════════════════════════
 
 elif scenario == "🤖 Smart Edge Selector":
 
     st.title("🤖 Smart Edge Selector — RL Client Selection Learning")
     st.markdown(
-        "Demonstrates the RL Selector learning to reduce K_sel from 8→4 "
-        "while maintaining F1-Macro accuracy. The curriculum schedule "
-        "guides gradual client reduction."
+        "The RL Selector learns to reduce K_sel from 8→4 while maintaining F1-Macro accuracy. "
+        "Curriculum scheduling guides gradual client reduction across federated rounds."
     )
 
-    # ── Curriculum schedule overlay ──────────────────────────────────────────
+    # ── Curriculum settings ─────────────────────────────────────────────────
 
-    col_a, col_b = st.columns([1, 2])
+    set_col, chart_col = st.columns([1, 2])
 
-    with col_a:
-        st.markdown("##### Curriculum Settings")
+    with set_col:
+        st.markdown("##### ⚙️ Curriculum Settings")
+
         k_init = st.slider("K_sel initial", 4, 15, 8, key="sel_init")
         k_min = st.slider("K_sel minimum", 1, 6, 4, key="sel_min")
-        total_rounds = st.slider("Total rounds", 10, 50, 30, key="sel_total")
+        total_rounds = st.slider("Total rounds", 10, 60, 30, key="sel_total")
 
-        show_curriculum = st.checkbox("Show curriculum line", value=True)
-
-    # Compute curriculum schedule
-    curriculum = []
-    for t in range(total_rounds):
+        curriculum = []
         decay_rate = (k_init - k_min) / max(total_rounds - 1, 1)
-        k_t = int(k_init - t * decay_rate)
-        curriculum.append(max(k_min, k_t))
+        for t in range(total_rounds):
+            k_t = int(k_init - t * decay_rate)
+            curriculum.append(max(k_min, k_t))
 
-    # ── K_sel over rounds chart ─────────────────────────────────────────────
+        avg_k = statistics.mean(curriculum)
+        savings = (1 - avg_k / k_init) * 100
 
-    rounds = list(range(1, total_rounds + 1))
+        sc1, sc2, sc3 = st.columns(3)
+        sc1.metric("Avg K_sel", f"{avg_k:.1f}")
+        sc2.metric("Comm. Savings", f"{savings:.0f}%")
+        sc3.metric("K_sel range", f"{k_init} → {k_min}")
 
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+        st.caption(
+            f"Curriculum: K_sel decays linearly from {k_init} to {k_min} "
+            f"over {total_rounds} rounds."
+        )
 
-    if show_curriculum:
+    with chart_col:
+        rounds = list(range(1, total_rounds + 1))
+
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # Curriculum line
         fig.add_trace(go.Scatter(
             x=rounds, y=curriculum,
             name="Curriculum K_sel",
-            line=dict(color="#ffa657", width=2, dash="dash"),
+            line=dict(color="#ffa657", width=2.5, dash="dash"),
             mode="lines+markers",
+            marker=dict(size=4),
         ), secondary_y=False)
 
-    # If federated data available, overlay actual K_sel
-    if federated_data and "k_sel" in federated_data:
-        actual_k = federated_data["k_sel"]
-        fig.add_trace(go.Scatter(
-            x=federated_data["rounds"], y=actual_k,
-            name="Actual K_sel",
-            line=dict(color="#58a6ff", width=2),
-            mode="lines+markers",
-        ), secondary_y=False)
+        # Overlay actual K_sel from all available federated histories
+        has_real_data = False
+        for name in available_datasets:
+            h = histories[name]
+            if h is not None and "rounds" in h:
+                actual_k_data = h.get("k_sel", [])
+                if actual_k_data and len(actual_k_data) > 0:
+                    fig.add_trace(go.Scatter(
+                        x=h["rounds"][:len(actual_k_data)],
+                        y=actual_k_data,
+                        name=f"{name} K_sel",
+                        line=dict(color=DATASETS[name]["color"], width=2),
+                        mode="lines+markers",
+                        marker=dict(size=4),
+                    ), secondary_y=False)
+                    has_real_data = True
 
-    # Overlay F1-Macro from data
-    if federated_data and "f1_macro" in federated_data:
-        f1_vals = federated_data["f1_macro"]
-        fig.add_trace(go.Scatter(
-            x=federated_data["rounds"], y=f1_vals,
-            name="F1-Macro",
-            line=dict(color="#3fb950", width=2),
-            mode="lines+markers",
-        ), secondary_y=True)
-        fig.update_yaxes(title_text="F1-Macro", secondary_y=True, range=[0.0, 1.0])
+        # F1-Macro from NSL-KDD (primary dataset)
+        if "NSL-KDD" in histories and histories["NSL-KDD"] and "f1" in histories["NSL-KDD"]:
+            h = histories["NSL-KDD"]
+            fig.add_trace(go.Scatter(
+                x=h["rounds"], y=compute_ema(h["f1"]),
+                name="NSL-KDD F1-Macro (EMA)",
+                line=dict(color="#3fb950", width=2),
+                mode="lines+markers",
+                marker=dict(size=4),
+            ), secondary_y=True)
+            fig.update_yaxes(title_text="F1-Macro", secondary_y=True, range=[0.0, 1.05])
 
-    fig.update_layout(
-        title="RL Selector: K_sel Curriculum + F1-Macro",
-        xaxis_title="Round",
-        yaxis_title="K_sel (clients selected)",
-        yaxis=dict(range=[0, k_init + 1]),
-        height=400,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-    )
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(
+            title="RL Selector: Curriculum K_sel & F1-Macro",
+            xaxis_title="Round",
+            yaxis_title="K_sel (clients selected)",
+            yaxis=dict(range=[0, k_init + 1]),
+            height=420,
+            template="plotly_dark",
+            paper_bgcolor="#0d1117",
+            plot_bgcolor="#161b22",
+            font=dict(color="#e6edf3"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        )
+        fig.update_xaxes(showgrid=True, gridcolor="#21262d")
+        fig.update_yaxes(showgrid=True, gridcolor="#21262d")
+        st.plotly_chart(fig, use_container_width=True)
 
-    # ── Client selection frequency ───────────────────────────────────────────
+    st.markdown("---")
 
-    st.markdown("##### Client Selection Frequency")
+    # ── Selection frequency ─────────────────────────────────────────────────
 
-    if federated_data and "selection_counts" in federated_data:
-        counts = federated_data["selection_counts"]
+    st.markdown("##### 📊 Client Selection Frequency")
+
+    # Try to load real selection counts from federated data
+    real_counts = None
+    real_ds_name = None
+    for name in available_datasets:
+        h = histories[name]
+        if h and "selection_counts" in h and h["selection_counts"]:
+            real_counts = h["selection_counts"]
+            real_ds_name = name
+            break
+
+    if real_counts:
         fig2 = go.Figure(go.Bar(
-            x=[f"Client {i}" for i in range(len(counts))],
-            y=counts,
-            marker_color=["#f85149" if federated_data.get("malicious_ids", []) and i in federated_data["malicious_ids"]
-                          else "#58a6ff" for i in range(len(counts))],
+            x=[f"Client {i}" for i in range(len(real_counts))],
+            y=real_counts,
+            marker_color=[DATASETS[real_ds_name]["color"] for _ in real_counts],
         ))
         fig2.update_layout(
-            title="Times Each Client Was Selected (total rounds)",
+            title=f"Client Selection Count — {real_ds_name}",
             xaxis_title="Client",
-            yaxis_title="Selection Count",
+            yaxis_title="Times Selected",
             height=300,
+            template="plotly_dark",
+            paper_bgcolor="#0d1117",
+            plot_bgcolor="#161b22",
+            font=dict(color="#e6edf3"),
         )
-        st.plotly_chart(fig2, use_container_width=True)
     else:
-        # Simulated frequency based on curriculum
-        import random
+        # Simulated data
         random.seed(42)
-        num_clients_sel = 10
-        sel_counts = [random.randint(5, 30) for _ in range(num_clients_sel)]
+        num_sel = 10
+        sel_counts = [random.randint(5, 30) for _ in range(num_sel)]
         fig2 = go.Figure(go.Bar(
-            x=[f"Client {i}" for i in range(num_clients_sel)],
+            x=[f"Client {i}" for i in range(num_sel)],
             y=sel_counts,
             marker_color="#58a6ff",
         ))
         fig2.update_layout(
-            title="Simulated Selection Frequency (based on curriculum)",
+            title="Simulated Client Selection Frequency",
             xaxis_title="Client",
-            yaxis_title="Selection Count",
+            yaxis_title="Times Selected",
             height=300,
+            template="plotly_dark",
+            paper_bgcolor="#0d1117",
+            plot_bgcolor="#161b22",
+            font=dict(color="#e6edf3"),
         )
-        st.plotly_chart(fig2, use_container_width=True)
 
-    # ── Efficiency stats ────────────────────────────────────────────────────
+    fig2.update_xaxes(showgrid=True, gridcolor="#21262d")
+    fig2.update_yaxes(showgrid=True, gridcolor="#21262d")
+    st.plotly_chart(fig2, use_container_width=True)
 
-    avg_k = statistics.mean(curriculum)
-    savings = (1 - avg_k / k_init) * 100
+    # ── Info box ────────────────────────────────────────────────────────────
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Avg K_sel", f"{avg_k:.1f}")
-    col2.metric("Communication Savings", f"{savings:.0f}%")
-    col3.metric("K_init → K_min", f"{k_init} → {k_min}")
-
-    st.info(
+    st.success(
         f"📡 **The RL Selector learns to use ~{avg_k:.1f} clients on average** "
         f"(vs fixed K={k_init}). "
         f"This saves **{savings:.0f}% communication overhead** "
@@ -665,10 +847,10 @@ elif scenario == "🤖 Smart Edge Selector":
     )
 
 
-# ─── Footer ────────────────────────────────────────────────────────────────────
+# ─── Footer ───────────────────────────────────────────────────────────────────
 
 st.markdown("---")
 st.caption(
     "FedRL-IDS Dashboard | FastAPI + ONNX + Streamlit | "
-    "Baseline V3 Acc=0.836 | F1=0.804 | FPR=0.0004"
+    "Multi-dataset: Edge-IIoT · NSL-KDD · IoMT 2024 · UNSW-NB15"
 )

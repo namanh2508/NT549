@@ -126,13 +126,13 @@ def print_summary(result: dict):
     for k in range(cfg["num_clients"]):
         status = "MALICIOUS" if k in cfg["malicious_ids"] else "Honest"
         rep = fr[k]
-        bar = "█" * int(rep * 20) + "░" * (20 - int(rep * 20))
+        bar = "*" * int(rep * 20) + "." * (20 - int(rep * 20))
         print(f"  Client {k:<3} {bar} {rep:.4f}  [{status}]")
 
     print()
-    print(f"  Honest clients  — mean: {stats['honest_mean_final']:.4f}, "
+    print(f"  Honest clients   mean: {stats['honest_mean_final']:.4f}, "
           f"min: {stats['honest_min_final']:.4f}, max: {stats['honest_max_final']:.4f}")
-    print(f"  Malicious clients — mean: {stats['malicious_mean_final']:.4f}, "
+    print(f"  Malicious clients mean: {stats['malicious_mean_final']:.4f}, "
           f"min: {stats['malicious_min_final']:.4f}, max: {stats['malicious_max_final']:.4f}")
     print()
     print(f"  Detected: {stats['detected_clients']} "
