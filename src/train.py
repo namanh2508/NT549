@@ -557,6 +557,7 @@ def run_training(cfg: Config, resume_checkpoint: Optional[str] = None):
             client_selector.record_selection(
                 selected_indices=selected_indices,
                 global_accuracy=eval_metrics["accuracy"],
+                global_f1_macro=eval_metrics["f1_macro"],
                 trust_scores=reputations,   # K-length FLTrust reputations, not selected-only
                 bernoulli_probs=bernoulli_probs,
             )

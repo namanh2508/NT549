@@ -48,6 +48,7 @@ References:
   FLTrust: Cao et al., NDSS 2021.
 """
 
+import random
 import torch
 import torch.nn as nn
 import numpy as np
@@ -351,6 +352,7 @@ class RLClientSelector:
 
         # Previous round tracking
         self._prev_global_accuracy: float = 0.0
+        self._prev_global_f1_macro: float = 0.0
         self._prev_trust_scores: List[float] = [1.0 / num_clients] * num_clients
 
         # Lock-in prevention: track how many times each client has been selected
@@ -366,7 +368,8 @@ class RLClientSelector:
         self.clip_epsilon = self.cfg.clip_epsilon
         self.ppo_epochs = self.cfg.ppo_epochs
         self.entropy_coef_init = self.cfg.entropy_coef
-        self.entropy_coef_min = 0.05  # was 0.02 — keep more exploration late-stage
+        self.entropy_coef_min = 0.02  # keep minimum exploration
+        self.epsilon_greedy = 0.15  # 15% random exploration chance
         self.value_coef = self.cfg.value_coef
         self.max_grad_norm = self.cfg.max_grad_norm
 
@@ -532,6 +535,18 @@ class RLClientSelector:
         probs_np = probs.cpu().numpy()
         self._last_probs = probs_np
 
+        # ── Epsilon-greedy exploration ──────────────────────────────────────────
+        # Force random selection with probability epsilon_greedy to prevent collapse
+        if self.epsilon_greedy > 0 and random.random() < self.epsilon_greedy:
+            random.shuffle(reputations)
+            selected = list(range(self.num_clients))
+            random.shuffle(selected)
+            if k_sel is not None:
+                selected = selected[:min(k_sel, self.num_clients)]
+            else:
+                selected = selected[:max(1, self.num_clients // 2)]
+            return selected, probs_np
+
         if k_sel is not None:
             # Curriculum override: ensure at least k_sel clients participate.
             # Sort by probability and take top-k_sel.
@@ -554,42 +569,46 @@ class RLClientSelector:
     def compute_reward(
         self,
         global_accuracy: float,
+        global_f1_macro: float,
         trust_scores: List[float],
         selected_indices: List[int],
     ) -> float:
         """
-        Resource-Efficiency Reward Function.
+        Resource-Efficiency Reward Function with F1-Macro optimization.
 
-        R_t = w_acc · ΔAcc_global − λ · (|S_t| / K) − γ · mean_{k∈S_t}(1 − R_k)
+        R_t = w_acc · ΔAcc + w_f1 · ΔF1-Macro − λ · (|S_t| / K) − γ · mean_{k∈S_t}(1 − R_k)
 
         where:
-          w_acc = 5.0  : explicit accuracy improvement weight (dominates other terms)
-          ΔAcc_global : improvement in global model accuracy vs previous round
+          w_acc = 3.0  : accuracy improvement weight
+          w_f1 = 5.0   : F1-Macro improvement weight (dominant)
+          ΔAcc        : improvement in global accuracy vs previous round
+          ΔF1-Macro   : improvement in global F1-Macro vs previous round
           |S_t| / K   : fraction of clients selected (communication cost proxy)
           (1 − R_k)   : how untrusted client k is according to FLTrust
 
-        FIX: Prior design had implicit ΔAcc weight=1.0, which was too small relative to
-        the penalty terms. This caused the selector to optimize for communication savings
-        rather than accuracy improvement, leading to lock-in on 3 clients and degradation.
-
-        This cleanly separates concerns:
-          - FLTrust decides "how much to trust each client" → appears in R_k
-          - RL Selector learns "how few clients can I select and still be accurate"
+        NOTE: F1-Macro is weighted higher to encourage the selector to find clients
+        that hold minority class data, improving overall class balance.
         """
         eps = 1e-8
 
-        # Accuracy improvement weight — make accuracy dominant over other terms
-        w_acc = 5.0
+        # Accuracy improvement weight
+        w_acc = 3.0
+        # F1-Macro improvement weight (higher to optimize for minority classes)
+        w_f1 = 5.0
 
-        # 1. Accuracy improvement (primary objective) — weighted 5x
-        delta_global = global_accuracy - self._prev_global_accuracy
-        acc_reward = w_acc * delta_global
+        # 1. Accuracy improvement
+        delta_accuracy = global_accuracy - self._prev_global_accuracy
+        acc_reward = w_acc * delta_accuracy
 
-        # 2. Communication cost penalty — reward FEWER selections
+        # 2. F1-Macro improvement (NEW - primary optimization target)
+        delta_f1_macro = global_f1_macro - self._prev_global_f1_macro
+        f1_reward = w_f1 * delta_f1_macro
+
+        # 3. Communication cost penalty — reward FEWER selections
         num_selected = len(selected_indices)
         comm_penalty = self.lambda_comm * (num_selected / self.num_clients)
 
-        # 3. Untrusted-client penalty — penalize selecting FLTrust-low-reputation clients
+        # 4. Untrusted-client penalty — penalize selecting FLTrust-low-reputation clients
         if num_selected > 0:
             selected_trusts = [trust_scores[k] for k in selected_indices]
             mean_untrusted = np.mean([1.0 - t for t in selected_trusts])
@@ -597,7 +616,7 @@ class RLClientSelector:
             mean_untrusted = 0.0
         untrusted_penalty = self.gamma_untrusted * mean_untrusted
 
-        reward = acc_reward - comm_penalty - untrusted_penalty
+        reward = acc_reward + f1_reward - comm_penalty - untrusted_penalty
 
         # ── Diversity bonus ──────────────────────────────────────────────────────
         # FIX: Penalize if selector keeps picking the same clients (lock-in).
@@ -624,6 +643,7 @@ class RLClientSelector:
         self,
         selected_indices: List[int],
         global_accuracy: float,
+        global_f1_macro: float,
         trust_scores: List[float],
         bernoulli_probs: np.ndarray,
     ):
@@ -635,6 +655,7 @@ class RLClientSelector:
         """
         reward = self.compute_reward(
             global_accuracy=global_accuracy,
+            global_f1_macro=global_f1_macro,
             trust_scores=trust_scores,
             selected_indices=selected_indices,
         )
@@ -671,6 +692,7 @@ class RLClientSelector:
 
         # Update tracking
         self._prev_global_accuracy = global_accuracy
+        self._prev_global_f1_macro = global_f1_macro
         self._prev_trust_scores = trust_scores[:]
         self._selection_history.extend(selected_indices)
         self._total_rounds_seen += 1

@@ -217,7 +217,7 @@ class PPOConfig:
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_epsilon: float = 0.1
-    entropy_coef: float = 0.01          # base entropy; auto-scaled by num_classes
+    entropy_coef: float = 0.05          # increased for better exploration (was 0.01)
     value_coef: float = 0.5
     max_grad_norm: float = 0.5
     ppo_epochs: int = 8

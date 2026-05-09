@@ -69,6 +69,8 @@ class FederatedAggregator:
         )
 
         self._global_model: Optional[OrderedDict] = None
+        # EMA smoothing to prevent model collapse from noisy aggregations
+        self.ema_momentum: float = 0.9  # 0.9 = new model 90%, prev 10%
 
     @property
     def global_model(self) -> Optional[OrderedDict]:
@@ -165,12 +167,30 @@ class FederatedAggregator:
             norm_weights = [w / total_weight for w in trust_scores]
             aggregated = self._weighted_average(reconstructed_models, norm_weights)
 
+        # Apply EMA smoothing to prevent model collapse from noisy aggregations
+        prev_global = self._global_model
+        aggregated = self._ema_smooth(aggregated, prev_global)
+
         # Update global model
         self._global_model = OrderedDict(
             (k, v.clone()) for k, v in aggregated.items()
         )
 
         return aggregated, trust_scores
+
+    def _ema_smooth(
+        self,
+        new_model: OrderedDict,
+        prev_model: OrderedDict,
+    ) -> OrderedDict:
+        """Apply EMA smoothing: w_smooth = m * w_new + (1-m) * w_prev."""
+        result = OrderedDict()
+        for key in new_model.keys():
+            result[key] = (
+                self.ema_momentum * new_model[key].float()
+                + (1 - self.ema_momentum) * prev_model[key].float()
+            )
+        return result
 
     def _weighted_average(
         self,
