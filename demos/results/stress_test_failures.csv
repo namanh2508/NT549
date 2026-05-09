@@ -1,0 +1,3 @@
+Method,Name,Error,Occurrences
+POST,/predict/batch,HTTPError('422 Client Error: Unprocessable Entity for url: /predict/batch'),1832
+POST,/predict,HTTPError('422 Client Error: Unprocessable Entity for url: /predict'),16

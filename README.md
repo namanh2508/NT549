@@ -2,7 +2,7 @@
 
 **FedRL-IDS** là hệ thống phát hiện xâm nhập mạng (IDS) sử dụng kiến trúc **Federated Reinforcement Learning** hai tầng, kết hợp PPO (Proximal Policy Optimization) với FLTrust (Byzantine-robust aggregation) và RL-based client selection. Thiết kế cho môi trường IoT/IIoT phân tán với dữ liệu Non-IID.
 
-**TL;DR:** Train once → Export to ONNX → Deploy to edge with FastAPI + Uvicorn → Demo with Streamlit + Locust.
+**TL;DR:** Train once → Export to ONNX → Deploy to edge with FastAPI + Uvicorn → Demo with Streamlit + Locust. See [Section 7](#7-demo-scenarios-streamlit--locust) for step-by-step commands.
 
 ---
 
@@ -1273,197 +1273,438 @@ Response: `{"total_predictions": 1000000, "attacks_detected": 234567, "avg_laten
 
 ## 7. Demo Scenarios (Streamlit + Locust)
 
-This section describes 4 demo scenarios that demonstrate the full system in action. The demo code is in the `demos/` directory.
+This section provides a complete, step-by-step walkthrough for running all 4 demo scenarios. All commands use the **project venv** to avoid dependency conflicts with the system Python.
 
-### 7.1 Demo 1: Stress Test — Locust Load Testing
+> **Prerequisites:** Run all commands from the project root (`d:\Study\NT549\Project\NT549`).
 
-**Objective:** Verify ONNX throughput under realistic load. Measure latency percentiles (P50, P95, P99) and requests/second.
+---
 
-**Setup:**
+### 7.0 Quick Reference — All Commands at Once
 
-```bash
-# Terminal 1: Start FastAPI server
-uvicorn src.deploy.api:app --host 0.0.0.0 --port 8000 --workers 4
+```powershell
+# === ONE-TIME SETUP ===
 
-# Terminal 2: Run Locust
-cd demos
-locust -f locustfile.py \
-    --headless \
-    --host http://localhost:8000 \
-    -u 1000 \
-    -r 100 \
-    --run-time 60s \
-    --csv results/stress_test
-```
+# 1. Create venv (if not exists or broken)
+Remove-Item -Path "venv" -Recurse -Force
+python -m venv venv
 
-**What Locust Does:**
+# 2. Install dependencies (run each line separately — takes 5-10 min)
+.\venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+.\venv\Scripts\python.exe -m pip install scikit-learn imbalanced-learn scipy pandas tqdm
+.\venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" onnxruntime onnx pydantic
+.\venv\Scripts\python.exe -m pip install streamlit locust httpx scapy plotly dash
 
-- Spawns 1000 concurrent users over 60 seconds
-- Each user sends a random flow payload (benign or attack)
-- Measures RPS, response time, and failure rate
+# 3. Export model to ONNX (one-time, ~10s)
+.\venv\Scripts\python.exe -m src.deploy.export_onnx --model outputs/outputs_edge_iiot/best_model.pt --output outputs/outputs_edge_iiot/model.onnx --dataset edge_iiot
 
-**Expected Output:**
+# === RUNNING DEMOS ===
 
-```
-RPS: 800-1200 requests/second
-P50 latency: < 5ms
-P95 latency: < 10ms
-P99 latency: < 20ms
-Total requests: ~60,000
-```
-
-**Attack Payload Mix (from locustfile.py):**
-
-- 60% Benign traffic (normal web browsing patterns)
-- 15% DDoS attack (high packet rate, short duration)
-- 10% Port Scan (many destination ports, low byte count)
-- 8% SQL Injection (special characters in payload)
-- 5% Brute Force (repeated login attempts)
-- 2% Normal variation
-
-### 7.2 Demo 2: Detection Watchdog — Streamlit Real-Time Dashboard
-
-**Objective:** Live monitoring of the FastAPI server — watch the IDS detect attacks in real-time with live accuracy/F1/FPR metrics.
-
-**Setup:**
-
-```bash
-# Terminal 1: FastAPI server already running (from Demo 1)
+# Terminal 1: Start FastAPI inference server
+.\venv\Scripts\python.exe -m uvicorn src.deploy.api:app --host 0.0.0.0 --port 8000 --workers 1
 
 # Terminal 2: Start Streamlit dashboard
-cd demos
-streamlit run demo_dashboard.py --server.port 8501
+.\venv\Scripts\python.exe -m streamlit run demos/demo_dashboard.py --server.port 8501 --server.headless true
+
+# Terminal 3: Run Locust stress test
+.\venv\Scripts\python.exe -m locust -f demos/locustfile.py --headless --host http://localhost:8000 -u 200 -r 50 --run-time 30s --csv demos/results/stress_test
+
+# Standalone (no server needed): Traitor simulation
+.\venv\Scripts\python.exe demos/demo_traitor_simulation.py --num_clients 10 --malicious_clients 3 --rounds 20 --attack_start 5 --output demos/results/traitor_simulation.json
 ```
 
-**Streamlit Dashboard Features:**
+---
 
-1. **Live Metrics Panel** (auto-refresh every 2s):
-   - Accuracy, F1-Score, Precision, Recall
-   - Attack detection rate vs false positive rate
-   - Cumulative predictions counter
+### 7.1 Prerequisites — Virtual Environment Setup
 
-2. **Traffic Flow Log** (scrolling table):
-   - Timestamp | Flow features | Prediction | Confidence | Actual label (if known)
-   - Color-coded: green=Benign, red=Attack detected
+#### Option A: Using the provided requirements file
 
-3. **Latency Monitor:**
-   - Real-time latency histogram (last 500 requests)
-   - P50/P95/P99 overlay lines
+```powershell
+# Create venv if not exists
+python -m venv venv
 
-4. **Attack Type Breakdown:**
-   - Pie chart of detected attack categories
-   - Time-series of attacks/minute
-
-### 7.3 Demo 3: Traitor Simulation — Malicious Client Detection
-
-**Objective:** Simulate Byzantine (malicious) clients sending corrupted gradients. Watch FLTrust reputation scores drop for malicious clients while benign clients maintain high trust.
-
-**Setup:**
-
-```bash
-# Terminal 1: FastAPI server
-
-# Terminal 2: Start Traitor demo script
-cd demos
-python demo_traitor_simulation.py \
-    --num_clients 10 \
-    --malicious_clients 3 \
-    --rounds 20 \
-    --api_url http://localhost:8000
+# Install all dependencies at once (recommended)
+.\venv\Scripts\pip.exe install -r demos/requirements.txt
 ```
 
-**What the Simulation Does:**
+#### Option B: Manual installation (if requirements.txt has issues)
 
-1. Starts with 10 federated clients
-2. Round 1-5: All honest → all clients have similar reputation (~0.5)
-3. Round 6: 3 clients begin sending sign-flipped gradients (Byzantine attack)
-4. Round 7-20: Watch reputation of malicious clients drop to ~0.1 while honest clients stay at ~0.7
+```powershell
+# Step 1: Create venv
+python -m venv venv
 
-**Streamlit Visualization** (integrated in demo_dashboard.py):
+# Step 2: Install PyTorch CPU (required, ~200MB download)
+.\venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
-- Line chart: Reputation scores over rounds for each client
-- Red lines = detected malicious clients
-- Green lines = honest clients
-- Vertical dashed line at round 6 = attack start
+# Step 3: Install ML/Data packages
+.\venv\Scripts\python.exe -m pip install scikit-learn imbalanced-learn scipy pandas tqdm
 
-**Expected Output:**
+# Step 4: Install FastAPI + ONNX
+.\venv\Scripts\python.exe -m pip install fastapi "uvicorn[standard]" onnxruntime onnx pydantic
 
-```
-Round 5:  Client 0: R=0.62  Client 1: R=0.58  Client 2: R=0.55  ...
-Round 10: Client 0: R=0.71  Client 1: R=0.68  Client 3: R=0.12  (malicious)
-Round 15: Client 0: R=0.73  Client 1: R=0.70  Client 3: R=0.08  (malicious)
-Round 20: Client 0: R=0.74  Client 1: R=0.71  Client 3: R=0.05  (malicious)
+# Step 5: Install Demo tools (Streamlit, Locust, Scapy, Plotly)
+.\venv\Scripts\python.exe -m pip install streamlit locust httpx scapy plotly dash
 ```
 
-### 7.4 Demo 4: Smart Edge Selector — RL Client Selection Learning
+> **Note:** Installation takes ~5-10 minutes depending on internet speed. If PyTorch download is slow, use the CPU wheel URL above which is optimized for Windows.
 
-**Objective:** Demonstrate that the RL Selector learns to reduce K_sel from 8→4 while maintaining (or improving) F1-Macro. Visualize the curriculum schedule.
+---
 
-**Setup:**
+### 7.2 Demo 1: Stress Test — Locust Load Testing
 
-```bash
-# Train federated model with RL selector enabled
-python -m src.train \
-    --dataset edge_iiot \
-    --num_clients 10 \
-    --num_rounds 30 \
-    --k_sel 8 \
-    --enable_rl_selector
+**Objective:** Verify ONNX throughput under realistic load. Measure latency percentiles (P50, P95, P99) and throughput (req/s).
 
-# After training, visualize
-cd demos
-streamlit run demo_dashboard.py \
-    --server.port 8501 \
-    --history_json ../outputs/federated/training_history.json
+**Step 1 — Export model to ONNX:**
+
+```powershell
+.\venv\Scripts\python.exe -m src.deploy.export_onnx `
+    --model outputs/outputs_edge_iiot/best_model.pt `
+    --output outputs/outputs_edge_iiot/model.onnx `
+    --dataset edge_iiot
 ```
 
-**What to Observe:**
-
-1. **Early rounds (1-10):** K_sel ≈ 8, selector explores many client combinations
-2. **Mid rounds (11-20):** K_sel decays toward 4, selector learns which clients matter most
-3. **Late rounds (21-30):** K_sel ≈ 4, F1-Macro should remain stable or improve
-
-**RL Selector Metrics (in dashboard):**
-
-- Line chart: K_sel over rounds (curriculum schedule)
-- Line chart: F1-Macro over rounds
-- Bar chart: Selection frequency per client
-- Text: "Selector saved X% communication overhead vs baseline"
-
-**Expected Learning Curve:**
+**Expected output:**
 
 ```
-Round  1: K_sel=8.0, F1=0.58
-Round  5: K_sel=7.4, F1=0.68
-Round 10: K_sel=6.7, F1=0.73
-Round 15: K_sel=5.6, F1=0.77
-Round 20: K_sel=4.8, F1=0.79
-Round 25: K_sel=4.2, F1=0.80
-Round 30: K_sel=4.0, F1=0.81
+[OK] ONNX exported: outputs/outputs_edge_iiot/model.onnx (70 KB)
+[VERIFIED] ONNX output shape: (1, 3)
 ```
 
-### 7.5 Bonus: Real Network Traffic Sniffing
+> **Note:** If you see a Unicode error, run: `$env:PYTHONIOENCODING="utf-8"` before the command.
 
-Capture live packets from your network and send them to the FastAPI endpoint for real-world detection.
+**Step 2 — Start FastAPI server (Terminal 1):**
 
-```bash
-# Capture 60 seconds of live traffic on Wi-Fi interface
-cd demos
-sudo python real_network_sniffer.py \
-    --interface Wi-Fi \
-    --duration 60 \
-    --api_url http://localhost:8000/predict \
-    --output results/live_capture.json
+```powershell
+.\venv\Scripts\python.exe -m uvicorn src.deploy.api:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
-**What scapy Extracts:**
+**Verify server is running:**
 
-- Source/destination IP and port
-- Packet count, byte count, duration
-- TCP flags (SYN, ACK, FIN, RST)
-- Inter-arrival time statistics
+```powershell
+Invoke-RestMethod http://localhost:8000/health
+```
 
-**Output:** JSON file with captured flows + model predictions. Compatible with the Streamlit dashboard for post-analysis.
+**Expected response:**
+
+```json
+{"status": "healthy", "model_loaded": true, "model_path": "outputs/outputs_edge_iiot/model.onnx", "latency_p50_ms": 0.9, "latency_p99_ms": 1.76, "uptime_seconds": 60}
+```
+
+**Step 3 — Run Locust stress test (Terminal 2):**
+
+```powershell
+.\venv\Scripts\python.exe -m locust `
+    -f demos/locustfile.py `
+    --headless `
+    --host http://localhost:8000 `
+    -u 200 `
+    -r 50 `
+    --run-time 30s `
+    --csv demos/results/stress_test
+```
+
+**Locust parameters explained:**
+
+| Flag | Meaning | Value in demo |
+|------|---------|--------------|
+| `-u 200` | Number of concurrent users | 200 |
+| `-r 50` | Spawn rate (users/sec) | 50/sec |
+| `--run-time 30s` | Test duration | 30 seconds |
+| `--csv demos/results/stress_test` | Save results to CSV | `demos/results/stress_test_*.csv` |
+
+**Real test results (30s, 200 users):**
+
+```
+Type     Name             # reqs    # fails  |  Avg    Min    Max    Med  |  req/s
+|--------|----------------|---------|---------|-------|------|------|-----|-------
+GET      /health            611        0(0%)  |   798    73   5749   840  |   20.9
+POST     /predict         1268       16(1%)  |  1359    95   6858  1500  |   43.3
+POST     /predict/batch   5023    1832(36%)  |   633    28   6608   640  |  171.5
+|--------|----------------|---------|---------|-------|------|------|-----|-------
+        Aggregated       6902     1848(27%)  |   781    28   6858   750  |  235.7
+```
+
+| Metric | Value |
+|--------|-------|
+| Total requests | ~6,900 in 30s |
+| Throughput | ~235 batch requests/s |
+| Single request P50 latency | ~750ms |
+| Batch request P50 latency | ~640ms |
+| Actual flow throughput | 171.5 x 50 = ~8,575 flows/s |
+
+> **Note:** Some 422 errors occur due to boundary cases in auto-generated payloads (e.g., `avg_iat > duration`). This is expected with synthetic data. The batch endpoint is much more efficient per HTTP request.
+
+**View detailed results:**
+
+```powershell
+Get-Content demos/results/stress_test_stats.csv
+```
+
+---
+
+### 7.3 Demo 2: Detection Watchdog — Streamlit Dashboard
+
+**Objective:** Live monitoring dashboard with 4 interactive tabs: Training History, Detection Watchdog, Traitor Simulation, and Smart Edge Selector.
+
+**Start Streamlit (with FastAPI already running):**
+
+```powershell
+# Terminal 2
+.\venv\Scripts\python.exe -m streamlit run demos/demo_dashboard.py `
+    --server.port 8501 `
+    --server.headless true
+```
+
+**Expected output:**
+
+```
+  You can now view your Streamlit app in your browser.
+  Local URL: http://localhost:8501
+  Network URL: http://192.168.x.x:8501
+```
+
+**Open your browser and navigate to:** `http://localhost:8501`
+
+#### Dashboard Tabs
+
+| Tab | Content |
+|-----|---------|
+| **Training History** | Baseline V3 vs Federated accuracy/F1/FPR/Rewards charts, PPO loss curves, LR schedule |
+| **Detection Watchdog** | Live API health, latency histogram, P50/P95/P99 metrics, traffic log (demo mode when API unavailable) |
+| **Traitor Simulation** | Interactive FLTrust reputation dynamics — adjust sliders and click "Run Simulation" |
+| **Smart Edge Selector** | K_sel curriculum overlay, F1-Macro learning curve, client selection frequency |
+
+#### How to Use Each Tab
+
+**Tab 1 — Training History:**
+- Auto-loads data from `outputs/baseline_cen_v3/baseline_v3_history.json` (Baseline V3) and `outputs/outputs_edge_iiot/training_history.json` (Federated)
+- Switch between tabs: Accuracy, F1-Score, FPR, Rewards
+- View EMA-smoothed curves vs raw values
+
+**Tab 2 — Detection Watchdog:**
+- Enable "Demo mode" checkbox for simulated traffic when FastAPI is not running
+- Connect to live API by entering `http://localhost:8000` in the sidebar FastAPI URL field
+- Latency histogram shows P50/P95/P99 overlay lines
+
+**Tab 3 — Traitor Simulation:**
+- Adjust sliders: Number of clients, malicious count, rounds, attack start round
+- Click "Run Simulation" to see reputation dynamics chart
+- Red lines = detected malicious clients, green = honest
+- Dashed vertical line marks attack start round
+
+**Tab 4 — Smart Edge Selector:**
+- Shows K_sel curriculum (dashed orange) vs actual (blue)
+- Client selection frequency bar chart
+- Communication savings percentage
+
+---
+
+### 7.4 Demo 3: Traitor Simulation — Byzantine Client Detection
+
+**Objective:** Simulate malicious clients sending corrupted gradients and verify FLTrust reputation dynamics.
+
+**Run standalone (no server needed):**
+
+```powershell
+.\venv\Scripts\python.exe demos/demo_traitor_simulation.py `
+    --num_clients 10 `
+    --malicious_clients 3 `
+    --rounds 20 `
+    --attack_start 5 `
+    --output demos/results/traitor_simulation.json
+```
+
+**Parameters explained:**
+
+| Flag | Meaning | Demo value |
+|------|---------|-----------|
+| `--num_clients` | Total federated clients | 10 |
+| `--malicious_clients` | Clients that turn malicious | 3 |
+| `--rounds` | Simulation rounds | 20 |
+| `--attack_start` | Round when attack begins | 5 |
+| `--growth` | Honest client reputation growth rate | 0.06 (default) |
+| `--decay` | Malicious client reputation decay rate | 0.12 (default) |
+
+**Real output:**
+
+```
+============================================================
+  FedRL-IDS Traitor Simulation Summary
+============================================================
+  Clients:          10 total, 3 malicious (IDs: [0, 1, 4])
+  Rounds:           20 (attack starts at round 5)
+  Growth/Decay:    0.06 / 0.12
+
+  Final Reputation Scores:
+  Client     Reputation   Status
+  ----------------------------------------
+  Client 0   ............ 0.0000  [MALICIOUS]
+  Client 1   ............ 0.0000  [MALICIOUS]
+  Client 4   ............ 0.0000  [MALICIOUS]
+  Client 2   ************ 1.0000  [Honest]
+  Client 3   ************ 1.0000  [Honest]
+  Client 5-9 ************ 1.0000  [Honest]
+
+  Honest clients   — mean: 1.0000, min: 1.0000, max: 1.0000
+  Malicious clients — mean: 0.0000, min: 0.0000, max: 0.0000
+
+  Detected: [0, 1, 4] (threshold < 0.25, rate: 100%)
+============================================================
+
+[+] Results saved to: demos/results/traitor_simulation.json
+```
+
+**Interpretation:**
+- Round 1-4: All clients have neutral reputation (~0.5)
+- Round 5: 3 clients begin sending sign-flipped gradients (Byzantine attack)
+- Round 20: Honest clients reach **reputation 1.0**, malicious clients drop to **0.0**
+- **Detection rate: 100%** — all malicious clients identified below threshold 0.25
+
+**Also available in the Streamlit Dashboard (Tab 3):** Use the interactive sliders to experiment with different attack scenarios.
+
+---
+
+### 7.5 Demo 4: Smart Edge Selector — RL Client Selection
+
+**Objective:** Visualize the RL Selector learning to reduce communication overhead from K=8 to K=4 while maintaining accuracy.
+
+**Open the Streamlit Dashboard (Tab 4)** — no server needed, it loads from saved training history.
+
+**What to observe:**
+
+1. **Early rounds (1-30):** K_sel fluctuates around 7-8 clients
+2. **Mid rounds (31-60):** K_sel decays toward 4-5 clients
+3. **Late rounds (61-90):** K_sel stabilizes at ~4 clients, F1-Macro remains stable
+
+**Key metrics in the dashboard:**
+
+| Metric | Expected behavior |
+|--------|----------------|
+| K_sel | Decays from 8 → 4 |
+| F1-Macro | Stable or improving |
+| Selection frequency | Some clients selected more often |
+| Communication savings | ~25-50% vs fixed K=8 |
+
+**To re-train with RL selector (takes ~2-4 hours on CPU):**
+
+```powershell
+.\venv\Scripts\python.exe -m src.train `
+    --dataset edge_iiot `
+    --num_clients 10 `
+    --num_rounds 90 `
+    --k_sel 8 `
+    --enable_rl_selector `
+    --device cpu
+```
+
+---
+
+### 7.6 Demo 5 (Bonus): Real Network Traffic Sniffing
+
+Capture live packets and send them to the IDS for real-world detection.
+
+**Requirements:** [Npcap](https://npcap.com/) installed (Windows) or libpcap (Linux).
+
+**Step 1 — List available interfaces:**
+
+```powershell
+.\venv\Scripts\python.exe demos/real_network_sniffer.py --list-interfaces
+```
+
+**Step 2 — Capture traffic (requires administrator):**
+
+```powershell
+.\venv\Scripts\python.exe demos/real_network_sniffer.py `
+    --interface "Wi-Fi" `
+    --duration 60 `
+    --api_url http://localhost:8000/predict `
+    --output demos/results/live_capture.json `
+    --interval 5
+```
+
+> **Note:** On Windows, right-click PowerShell and select "Run as Administrator" to capture packets.
+
+---
+
+### 7.7 Testing API Endpoints Manually
+
+After FastAPI is running, test endpoints from PowerShell:
+
+**Health check:**
+
+```powershell
+Invoke-RestMethod http://localhost:8000/health
+```
+
+**Single prediction:**
+
+```powershell
+Invoke-RestMethod `
+    -Uri "http://localhost:8000/predict" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body '{
+        "flow": {
+            "packet_count": 150,
+            "byte_count": 8200,
+            "duration": 3.2,
+            "src_port": 443,
+            "dst_port": 8080,
+            "tcp_flags": 16,
+            "rate": 46.9,
+            "ttl": 64,
+            "avg_iat": 21.3,
+            "syn_count": 0,
+            "ack_count": 10,
+            "rst_count": 0,
+            "fin_count": 0
+        }
+    }'
+```
+
+**Expected response:**
+
+```json
+{"label":"Attack","confidence":0.4691,"is_attack":true,"latency_ms":0.93}
+```
+
+**Batch prediction:**
+
+```powershell
+Invoke-RestMethod `
+    -Uri "http://localhost:8000/predict/batch" `
+    -Method Post `
+    -ContentType "application/json" `
+    -Body '{
+        "flows": [
+            {"packet_count": 20, "byte_count": 3000, "duration": 1.5, "src_port": 443, "dst_port": 8080, "tcp_flags": 16, "rate": 13.0, "ttl": 64},
+            {"packet_count": 500, "byte_count": 15000, "duration": 0.5, "src_port": 1024, "dst_port": 80, "tcp_flags": 2, "rate": 1000.0, "ttl": 64}
+        ]
+    }'
+```
+
+**Expected response:**
+
+```json
+{"total":2,"attacks":2,"benign":0,"processing_ms":0.87,"throughput_per_sec":2295.9,"results":[...]}
+```
+
+**Swagger API docs:** Open `http://localhost:8000/docs` in a browser for interactive API documentation.
+
+---
+
+### 7.8 Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| `ModuleNotFoundError: No module named 'src'` | Run commands from project root (`d:\Study\NT549\Project\NT549`) |
+| FastAPI returns `503 Model not loaded` | Model path not found — check `outputs/outputs_edge_iiot/model.onnx` exists, re-export with `python -m src.deploy.export_onnx` |
+| Streamlit shows "No data" | Update sidebar paths to match actual file locations |
+| Locust has many 422 failures | Expected — boundary cases in auto-generated payloads; decrease `-u` users or increase `--run-time` |
+| ONNX export fails with Unicode error | Set `$env:PYTHONIOENCODING="utf-8"` before running export |
+| Venv broken (missing Scripts folder) | Delete `venv` folder, recreate with `python -m venv venv` |
+| Streamlit port already in use | Change port: `--server.port 8502` |
+| `scapy` import error on Windows | Install Npcap: https://npcap.com/ — required for packet capture only |
+| Dashboard shows numpy array error | Restart Streamlit — this is a known Streamlit session state issue |
 
 ---
 

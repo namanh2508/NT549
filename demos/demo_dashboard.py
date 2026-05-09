@@ -111,11 +111,11 @@ st.sidebar.markdown("**History Files**")
 
 baseline_path = st.sidebar.text_input(
     "Baseline V3 history",
-    value="../outputs/baseline_cen_v3/baseline_v3_history.json",
+    value="outputs/baseline_cen_v3/baseline_v3_history.json",
 )
 federated_path = st.sidebar.text_input(
     "Federated history",
-    value="../outputs/federated/training_history.json",
+    value="outputs/outputs_edge_iiot/training_history.json",
 )
 
 live_api_url = st.sidebar.text_input(
@@ -463,9 +463,11 @@ elif scenario == "🐍 Traitor Simulation":
         malicious_ids = st.session_state.malicious_ids
         ts_rounds = st.session_state.ts_rounds
 
-        # ── Reputation line chart ─────────────────────────────────────────────
-
-        fig = go.Figure()
+        # session_state may serialize np.array back to list; normalize here
+        import numpy as np
+        if isinstance(reputations, list) and isinstance(reputations[0], list):
+            reputations = [list(r) for r in reputations]
+        rep_array = np.array(reputations)
         rounds = list(range(len(reputations)))
 
         for k in range(num_clients):
@@ -474,7 +476,7 @@ elif scenario == "🐍 Traitor Simulation":
             dash = "dash" if k in malicious_ids else "solid"
             width = 1.5 if k in malicious_ids else 1.0
             fig.add_trace(go.Scatter(
-                x=rounds, y=reputations[:, k],
+                x=rounds, y=rep_array[:, k],
                 name=label,
                 line=dict(color=color, dash=dash, width=width),
                 mode="lines",
